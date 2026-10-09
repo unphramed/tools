@@ -29,7 +29,7 @@ maintainer repository. Future users must obtain this package independently via
 Composer, without access to website sources. No licensing or publication decision
 is made by this prototype.
 
-The planned GitHub distribution repository is `unphramed/tools`. It will contain
+The GitHub distribution repository is `unphramed/tools`. It is intended to contain
 only this package, with `composer.json` at its root. Development remains in the
 private Unphramed monorepo; the mirror is read-only for contributions and must not
 be edited independently.
