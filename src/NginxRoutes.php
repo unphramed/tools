@@ -4,142 +4,180 @@ declare(strict_types=1);
 
 namespace Unphramed\Tools;
 
+/** Interpretation of the documented native profiles, never a runtime registry. */
 final class NginxRoutes
 {
-    public static function parameter(string $path): ?string
+    public static function read(string $root, ?string $http = null, ?string $source = null): array
     {
-        if (!preg_match('~^/(?:[A-Za-z0-9_-]+|\{[a-z][a-z0-9_]*\})(?:/(?:[A-Za-z0-9_-]+|\{[a-z][a-z0-9_]*\}))*$~D', $path)) {
-            throw new RouteError('Use slash-separated literal segments and at most one {lowercase_parameter}');
-        }
-        preg_match_all('/\{([a-z][a-z0-9_]*)\}/', $path, $matches);
-        if (count($matches[1]) > 1) {
-            throw new RouteError('Only one positive integer parameter is supported');
-        }
-        $first = explode('/', trim($path, '/'))[0];
-        if (in_array($first, ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'assets'], true)) {
-            throw new RouteError('This path belongs to a protected implementation or asset namespace');
-        }
-        return $matches[1][0] ?? null;
-    }
-
-    public static function endpoint(string $endpoint): void
-    {
-        if (!preg_match('~^web/GET/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.php$~D', $endpoint)) {
-            throw new RouteError('Endpoint must be a .php file below web/GET, without traversal');
-        }
-    }
-
-    public static function render(string $path, string $endpoint, bool $websiteProfile = false): string
-    {
-        $parameter = self::parameter($path);
-        self::endpoint($endpoint);
-        $script = '$read_method/' . substr($endpoint, strlen('web/GET/'));
-        $location = '= ' . $path;
-        $routeInput = '';
-        if ($parameter !== null) {
-            $expression = str_replace('{' . $parameter . '}', '(?<route_' . $parameter . '>[1-9][0-9]{0,8})', $path);
-            $location = '~ "^' . $expression . '$"';
-            $routeInput = '    fastcgi_param ROUTE_' . strtoupper($parameter) . ' $route_' . $parameter . ";\n";
-        }
-        $allow = $websiteProfile ? '    add_header Allow $read_allow always;' . "\n" : '';
-        $conditionalAllow = $websiteProfile ? '' : '        add_header Allow "GET, HEAD" always;' . "\n";
-        $include = $websiteProfile ? '../config/fastcgi-params.conf' : 'fastcgi-params.conf';
-        return <<<NGINX
-location $location {
-$allow    if (\$read_method = "") {
-$conditionalAllow        return 405;
-    }
-    try_files /$script =404;
-    include $include;
-    fastcgi_param SCRIPT_FILENAME \$document_root/$script;
-    fastcgi_param SCRIPT_NAME /$script;
-$routeInput    fastcgi_pass example_php;
-}
-
-NGINX;
-    }
-
-    public static function inventory(string $source, bool $websiteProfile = false): array
-    {
-        $nodes = (new NginxSyntax($source))->parse();
-        $routes = [];
-        foreach ($nodes as $node) {
+        $http ??= file_get_contents($root . '/config/http.conf');
+        $source ??= file_get_contents($root . '/config/routes.conf');
+        $result = ['routes' => [], 'locations' => [], 'maps' => [], 'diagnostics' => [], 'checks' => []];
+        foreach (['config/http.conf' => $http, 'config/routes.conf' => $source] as $file => $text) {
             try {
-                if (count($node['args']) !== 3 || $node['args'][0] !== 'location' || $node['children'] === null) {
-                    throw new RouteError('Only explicit read locations are supported in this route file');
-                }
-                [, $modifier, $pattern] = $node['args'];
-                $path = $pattern;
-                if ($modifier === '~') {
-                    if (!str_starts_with($pattern, '^') || !str_ends_with($pattern, '$')) {
-                        throw new RouteError('Parameter routes must be anchored');
-                    }
-                    $path = preg_replace('~\(\?<route_([a-z][a-z0-9_]*)>\[1-9\]\[0-9\]\{0,8\}\)~', '{$1}', substr($pattern, 1, -1), -1, $count);
-                    if ($count !== 1) {
-                        throw new RouteError('Expected exactly one bounded positive integer capture');
-                    }
-                } elseif ($modifier !== '=') {
-                    throw new RouteError('Unsupported location modifier');
-                }
-                $parameter = self::parameter($path);
-                if (($modifier === '~') !== ($parameter !== null)) {
-                    throw new RouteError('Location modifier does not match its parameter');
-                }
-                $script = null;
-                foreach ($node['children'] as $child) {
-                    if (array_slice($child['args'], 0, 2) === ['fastcgi_param', 'SCRIPT_NAME']) {
-                        $script = $child['args'][2] ?? null;
+                $nodes = (new NginxSyntax($text))->parse();
+                foreach ($nodes as $node) {
+                    try {
+                        if ($file === 'config/http.conf') {
+                            self::map($node, $result);
+                        } else {
+                            $result['locations'][] = self::location($node, $result, $root);
+                        }
+                    } catch (RouteError $error) {
+                        $result['diagnostics'][] = ['file' => $root . '/' . $file, 'line' => $node['line'], 'message' => $error->getMessage()];
                     }
                 }
-                if ($script === null) {
-                    throw new RouteError('Missing SCRIPT_NAME template');
-                }
-                if (!str_starts_with($script, '/$read_method/')) {
-                    throw new RouteError('SCRIPT_NAME must select the directory through $read_method');
-                }
-                $endpoint = 'web/GET/' . substr($script, strlen('/$read_method/'));
-                $expected = (new NginxSyntax(self::render($path, $endpoint, $websiteProfile)))->parse();
-                if (NginxSyntax::shape([$node]) !== NginxSyntax::shape($expected)) {
-                    throw new RouteError('Location differs from the supported GET/HEAD profile (directives, order or FastCGI contract)');
-                }
-                $routes[] = ['path' => $path, 'methods' => ['GET', 'HEAD'], 'endpoint' => $endpoint, 'parameter' => $parameter, 'line' => $node['line'], 'offset' => $node['start']];
             } catch (RouteError $error) {
-                throw new RouteError($error->getMessage(), $node['line']);
+                $result['diagnostics'][] = ['file' => $root . '/' . $file, 'line' => $error->sourceLine, 'message' => $error->getMessage()];
             }
         }
-        foreach ($routes as $index => $route) {
-            foreach (array_slice($routes, 0, $index) as $previous) {
-                if (self::overlap($route['path'], $previous['path'])) {
-                    throw new RouteError('Overlapping read routes: ' . $previous['path'] . ' and ' . $route['path'], $route['line']);
-                }
-            }
-        }
-        return $routes;
-    }
-
-    /** Conservative overlap check for the narrow segment grammar, not arbitrary regex. */
-    private static function overlap(string $a, string $b): bool
-    {
-        $left = explode('/', $a);
-        $right = explode('/', $b);
-        if (count($left) !== count($right)) {
-            return false;
-        }
-        foreach ($left as $i => $segment) {
-            $other = $right[$i];
-            $aParameter = str_starts_with($segment, '{');
-            $bParameter = str_starts_with($other, '{');
-            if ($aParameter && $bParameter) {
+        foreach ($result['locations'] as $location) {
+            if ($location['kind'] === 'redirect') {
+                $result['routes'][] = ['file' => $root . '/config/routes.conf', 'line' => $location['node']['line'], 'offset' => $location['node']['start'], 'kind' => 'redirect', 'path' => $location['path'], 'methods' => [], 'endpoint' => null, 'parameters' => [], 'parameter' => null, 'redirect' => $location['redirect']];
                 continue;
             }
-            if ($aParameter || $bParameter) {
-                if (!preg_match('/^[1-9][0-9]{0,8}$/D', $aParameter ? $other : $segment)) {
-                    return false;
-                }
-            } elseif ($segment !== $other) {
-                return false;
+            $groups = [];
+            foreach ($location['bindings'] as $method => $endpoint) {
+                $groups[$endpoint][] = $method;
+            }
+            foreach ($groups as $endpoint => $methods) {
+                $result['routes'][] = ['file' => $root . '/config/routes.conf', 'line' => $location['node']['line'], 'offset' => $location['node']['start'], 'kind' => 'endpoint', 'path' => $location['path'], 'methods' => $methods, 'endpoint' => $endpoint, 'parameters' => $location['parameters'], 'parameter' => $location['parameters'][0]['name'] ?? null];
             }
         }
-        return true;
+        return $result;
+    }
+
+    private static function map(array $node, array &$result): void
+    {
+        $args = $node['args'];
+        if (count($args) !== 3 || $args[0] !== 'map' || !in_array($args[1], ['$request_method', '$status'], true) || !preg_match('/\A\$[a-z][a-z0-9_]*\z/D', $args[2]) || $node['children'] === null) {
+            throw new RouteError('Unsupported HTTP configuration: expected a literal method or status map');
+        }
+        if (isset($result['maps'][$args[2]])) {
+            throw new RouteError('Duplicate map variable: ' . $args[2]);
+        }
+        $entries = [];
+        foreach ($node['children'] as $child) {
+            if (count($child['args']) !== 2 || $child['children'] !== null || isset($entries[$child['args'][0]])) {
+                throw new RouteError('Map needs unique literal entries');
+            }
+            [$key, $value] = $child['args'];
+            if ($key !== 'default' && $args[1] === '$request_method') {
+                RoutePath::method($key);
+            }
+            if ($key !== 'default' && $args[1] === '$status' && $key !== '405') {
+                throw new RouteError('Only the documented 405 Allow status map is interpreted');
+            }
+            $entries[$key] = $value;
+        }
+        if (!array_key_exists('default', $entries) || $entries['default'] !== '') {
+            throw new RouteError('Method/Allow maps must have an empty default');
+        }
+        unset($entries['default']);
+        $result['maps'][$args[2]] = ['source' => $args[1], 'entries' => $entries, 'node' => $node];
+    }
+
+    private static function location(array $node, array &$result, string $root): array
+    {
+        $description = RoutePath::fromLocation($node['args']);
+        if ($node['children'] === null) {
+            throw new RouteError('Location needs a block');
+        }
+        if (count($node['children']) === 1 && $node['children'][0]['args'][0] === 'return') {
+            $return = $node['children'][0]['args'];
+            if (count($return) !== 3 || !in_array($return[1], ['301', '302', '303', '307', '308'], true) || !preg_match('~\A/[A-Za-z0-9/_-]*\z~D', $return[2])) {
+                throw new RouteError('Only literal local redirects are interpreted');
+            }
+            return $description + ['node' => $node, 'kind' => 'redirect', 'redirect' => ['status' => (int) $return[1], 'target' => $return[2]]];
+        }
+        $directives = [];
+        $params = [];
+        $allow = null;
+        $variable = null;
+        foreach ($node['children'] as $child) {
+            $args = $child['args'];
+            if ($args[0] === 'if') {
+                if ($variable !== null || count($args) !== 5 || !preg_match('/\A\(\$([a-z][a-z0-9_]*)\z/D', $args[1], $match) || $args[2] !== '=' || $args[3] !== '' || $args[4] !== ')' || $child['children'] === null) {
+                    throw new RouteError('Only an empty method-map guard is interpreted');
+                }
+                $variable = '$' . $match[1];
+                $returns = 0;
+                foreach ($child['children'] as $guard) {
+                    if ($guard['args'] === ['return', '405'] && $guard['children'] === null) {
+                        $returns++;
+                    } elseif (count($guard['args']) === 4 && array_slice($guard['args'], 0, 2) === ['add_header', 'Allow'] && $guard['args'][3] === 'always' && $guard['children'] === null && $allow === null) {
+                        $allow = $guard['args'][2];
+                    } else {
+                        throw new RouteError('Unsupported method guard');
+                    }
+                }
+                if ($returns !== 1) {
+                    throw new RouteError('Method guard must return 405');
+                }
+            } elseif ($child['children'] !== null) {
+                throw new RouteError('Unsupported nested location block');
+            } elseif ($args[0] === 'fastcgi_param' && count($args) === 3) {
+                if (isset($params[$args[1]])) {
+                    throw new RouteError('Duplicate FastCGI parameter');
+                }
+                $params[$args[1]] = $args[2];
+            } elseif (count($args) === 4 && array_slice($args, 0, 2) === ['add_header', 'Allow'] && $args[3] === 'always' && $allow === null) {
+                $allow = $args[2];
+            } elseif (in_array($args[0], ['try_files', 'include', 'fastcgi_pass'], true) && !isset($directives[$args[0]])) {
+                $directives[$args[0]] = $args;
+            } else {
+                throw new RouteError('Unsupported location directive: ' . $args[0]);
+            }
+        }
+        $map = $result['maps'][$variable ?? ''] ?? null;
+        if ($map === null || $map['source'] !== '$request_method' || !$map['entries']) {
+            throw new RouteError('Missing literal method map for this location');
+        }
+        $script = $params['SCRIPT_NAME'] ?? '';
+        if (!preg_match('~\A/' . preg_quote($variable, '~') . '(?:/[A-Za-z0-9_/-]+\.php)?\z~D', $script) || ($params['SCRIPT_FILENAME'] ?? '') !== '$document_root' . $script || ($directives['try_files'] ?? []) !== ['try_files', $script, '=404']) {
+            throw new RouteError('Script parameters and file-existence check must select the same mapped file');
+        }
+        $include = $directives['include'][1] ?? '';
+        if (count($directives['include'] ?? []) !== 2 || !in_array($include, ['fastcgi-params.conf', '../config/fastcgi-params.conf', $root . '/config/fastcgi-params.conf'], true)) {
+            throw new RouteError('Use the project-owned config/fastcgi-params.conf include');
+        }
+        $pass = $directives['fastcgi_pass'][1] ?? '';
+        self::fastcgiPass($pass);
+        if (count($directives['fastcgi_pass'] ?? []) !== 2) {
+            throw new RouteError('Invalid FastCGI destination');
+        }
+        unset($params['SCRIPT_NAME'], $params['SCRIPT_FILENAME']);
+        foreach ($description['parameters'] as &$parameter) {
+            $keys = array_keys($params, '$' . $parameter['capture'], true);
+            if (count($keys) !== 1 || !preg_match('/\AROUTE_[A-Z][A-Z0-9_]*\z/D', $keys[0])) {
+                throw new RouteError('Each capture needs one explicit ROUTE_* FastCGI parameter');
+            }
+            $parameter['serverKey'] = $keys[0];
+            unset($params[$keys[0]]);
+        }
+        unset($parameter);
+        if ($params) {
+            throw new RouteError('Unrecognized additional FastCGI parameters');
+        }
+        $bindings = [];
+        foreach ($map['entries'] as $method => $value) {
+            $endpoint = 'web' . str_replace($variable, $value, $script);
+            RoutePath::endpoint($endpoint);
+            $bindings[$method] = $endpoint;
+        }
+        $allowValue = str_starts_with($allow ?? '', '$') ? ($result['maps'][$allow]['entries']['405'] ?? null) : $allow;
+        $allowed = $allowValue === null ? [] : array_map('trim', explode(',', $allowValue));
+        $methods = array_keys($bindings);
+        sort($allowed); sort($methods);
+        if ($allowed !== $methods) {
+            $result['checks'][] = ['file' => $root . '/config/routes.conf', 'line' => $node['line'], 'message' => 'Allow must list exactly the mapped methods: ' . implode(', ', array_keys($bindings))];
+        }
+        return $description + ['node' => $node, 'kind' => 'endpoint', 'bindings' => $bindings, 'variable' => $variable, 'include' => $include, 'pass' => $pass];
+    }
+
+    public static function fastcgiPass(string $pass): void
+    {
+        if (!preg_match('~\A(?:[a-z][a-z0-9_]*|127\.0\.0\.1:[0-9]+|unix:/[A-Za-z0-9/_.-]+)\z~D', $pass)) {
+            throw new RouteError('Use a literal upstream name, loopback FastCGI address or Unix socket');
+        }
     }
 }

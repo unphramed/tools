@@ -7,7 +7,7 @@ namespace Unphramed\Tools;
 /** Syntax-check a disposable envelope for the supported profile; never start services. */
 final class ConfigurationCheck
 {
-    public static function check(string $root, string $routes): void
+    public static function check(string $root, string $routes, ?string $httpFile = null): void
     {
         foreach (['vendor/autoload.php', 'bootstrap.php'] as $file) {
             if (!is_file($root . '/' . $file)) {
@@ -30,7 +30,16 @@ final class ConfigurationCheck
             $bodyPath = self::nginxQuote($work . '/body');
             $fastcgiPath = self::nginxQuote($work . '/fastcgi');
             $web = self::nginxQuote($root . '/web');
-            $http = self::nginxQuote($root . '/config/http.conf');
+            $http = self::nginxQuote($httpFile ?? $root . '/config/http.conf');
+            $upstreams = '';
+            $inventory = NginxRoutes::read($root, file_get_contents($httpFile ?? $root . '/config/http.conf'), file_get_contents($routes));
+            foreach (array_unique(array_column(array_filter($inventory['locations'], static fn($location) => $location['kind'] === 'endpoint'), 'pass')) as $pass) {
+                if (preg_match('/\A[a-z][a-z0-9_]*\z/D', $pass)) {
+                    $upstreams .= 'upstream ' . $pass . ' { server 127.0.0.1:9001; }' . "\n";
+                }
+            }
+            $hasRoot = in_array('/', array_column($inventory['locations'], 'path'), true);
+            $fallback = $hasRoot ? '' : 'location / { return 404; }';
             $routeFile = self::nginxQuote($routes);
             $params = self::nginxQuote($root . '/config/fastcgi-params.conf');
             mkdir($work . '/.runtime', 0700);
@@ -49,7 +58,7 @@ http {
     types { text/css css; text/html html; }
     default_type application/octet-stream;
     include $http;
-    upstream example_php { server 127.0.0.1:9001; }
+    $upstreams
     server {
         listen 127.0.0.1:8081;
         server_name localhost;
@@ -58,7 +67,7 @@ http {
         location ~ \.php(?:/|$) { return 404; }
         include $routeFile;
         location /assets/ { try_files \$uri =404; }
-        location / { return 404; }
+        $fallback
     }
 }
 NGINX);

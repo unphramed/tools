@@ -1,6 +1,6 @@
 {
     "name": "unphramed/tools",
-    "description": "Development tools for the explicit Nginx GET/HEAD endpoint profile.",
+    "description": "Development-only tools for explicit native Nginx method-to-PHP-file associations.",
     "type": "library",
     "require": {
         "php": ">=8.5",
@@ -15,5 +15,12 @@
     },
     "bin": [
         "bin/unphramed-routes"
+    ],
+    "keywords": [
+        "development",
+        "tooling",
+        "nginx",
+        "routing",
+        "unphramed"
     ]
 }

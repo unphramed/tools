@@ -9,6 +9,7 @@ final class NginxSyntax
 {
     private array $tokens = [];
     private int $position = 0;
+    private array $comments = [];
 
     public function __construct(string $source)
     {
@@ -19,7 +20,10 @@ final class NginxSyntax
                 continue;
             }
             if ($source[$i] === '#') {
-                $i = strpos($source, "\n", $i) ?: $length;
+                $end = strpos($source, "\n", $i);
+                $end = $end === false ? $length : $end;
+                $this->comments[] = substr($source, $i, $end - $i);
+                $i = $end;
                 continue;
             }
             $start = $i;
@@ -53,6 +57,11 @@ final class NginxSyntax
             }
             $this->tokens[] = ['value' => $value, 'kind' => $kind, 'line' => $line, 'start' => $start, 'end' => $i];
         }
+    }
+
+    public function comments(): array
+    {
+        return $this->comments;
     }
 
     public function parse(bool $nested = false): array
