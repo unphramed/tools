@@ -1,0 +1,19 @@
+{
+    "name": "unphramed/tools",
+    "description": "Development tools for the explicit Nginx GET/HEAD endpoint profile.",
+    "type": "library",
+    "require": {
+        "php": ">=8.5",
+        "ext-ctype": "*",
+        "ext-posix": "*",
+        "composer-runtime-api": "^2.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Unphramed\\Tools\\": "src/"
+        }
+    },
+    "bin": [
+        "bin/unphramed-routes"
+    ]
+}
