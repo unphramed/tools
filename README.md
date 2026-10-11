@@ -22,9 +22,14 @@ output, when `NO_COLOR` is set or `TERM=dumb`; JSON output remains unstyled.
 
 The installed `vendor/bin/unphramed-routes` targets the current directory or explicit
 `--project DIR`. PHP 8.5 with ctype/posix is required; `check` and additions also
-require Nginx and PHP-FPM on PATH. The application supplies `config/http.conf`,
-`config/routes.conf`, its project-owned `config/fastcgi-params.conf`, bootstrap and
-Composer autoloader. No Python, web-server reload or application execution is used by the CLI.
+require Nginx and PHP-FPM on PATH. The application supplies `config/nginx.conf`,
+its project-owned `config/fastcgi-params.conf`, bootstrap and
+Composer autoloader. The routing file contains method/status maps followed by one
+`server` block, an application-named `*-server.conf` environment include, route
+locations and the exact utility locations documented on the website. Utilities
+are excluded from the inventory; unsupported syntax and multiple servers block edits.
+Ports, roots, TLS and upstream addresses belong to the environment.
+No Python, web-server reload or application execution is used by the CLI.
 
 ```sh
 vendor/bin/unphramed-routes list
@@ -98,10 +103,10 @@ formatting can change in the preview. Old maps remain untouched rather than bein
 removed without proving they are unused.
 
 FastCGI settings are inferred only when unambiguous; otherwise supply
-`--fastcgi-pass VALUE` and `--params-include VALUE`. Supported parameter includes
-are `fastcgi-params.conf`, `../config/fastcgi-params.conf`, or the absolute path to the
-project's `config/fastcgi-params.conf`. Includes resolve from the main Nginx configuration
-directory: retain the application's actual convention. Unknown includes are not followed.
+`--fastcgi-pass UPSTREAM_NAME` and `--params-include VALUE`. Supported parameter includes
+are `fastcgi-params.conf` and `../config/fastcgi-params.conf`, resolved relative to
+the main Nginx configuration. FastCGI destinations must be named upstreams; their
+addresses or sockets are provided by the environment, not the routing source.
 
 `list` is useful even when Allow is wrong; `check` reports the mismatch and edits are
 blocked. Unsupported syntax yields located diagnostics, a nonzero exit and an explicitly
@@ -125,3 +130,12 @@ The private artifact builder and IDE instructions live in the maintainer monorep
 The planned `unphramed/tools` GitHub repository is a package-only distribution mirror;
 development remains in the private monorepo. Do not edit the mirror independently.
 No licensing or publication decision is made by this prototype.
+
+## Single-file alpha migration
+
+The former `config/http.conf` / `config/routes.conf` organization is no longer
+supported. Migrate manually using the website's
+[HTTP routing guide](../../docs/unphramed/http-routing.md#migrate-the-former-two-file-alpha-format).
+The CLI never rewrites legacy projects automatically. `check` supplies a disposable
+server fragment and named upstream substitutes; it does not inspect or validate
+the real deployment fragment, TLS, listeners or PHP-FPM connection.

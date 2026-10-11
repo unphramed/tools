@@ -56,7 +56,7 @@ final class RoutesCommand
         }
     }
 
-    private static function validateConfiguration(string $root, string $routeFile, ?string $httpFile = null): void
+    private static function validateConfiguration(string $root, string $routeFile): void
     {
         $params = self::projectPath($root, 'config/fastcgi-params.conf');
         if (!is_file($params)) {
@@ -92,7 +92,7 @@ final class RoutesCommand
         if ($expected) {
             throw new RouteError('Missing shared FastCGI parameters: ' . implode(', ', array_keys($expected)), 1, $params);
         }
-        ConfigurationCheck::check($root, $routeFile, $httpFile);
+        ConfigurationCheck::check($root, $routeFile);
     }
 
     private static function outputResult(array $result, bool $json, bool $previewShown = false): void
@@ -134,7 +134,7 @@ final class RoutesCommand
     private static function execute(array $argv): int
     {
         $json = in_array('--json', $argv, true);
-        $sourceFile = 'config/routes.conf';
+        $sourceFile = 'config/nginx.conf';
         $result = ['version' => 2, 'operation' => $argv[1] ?? '', 'ok' => false, 'routes' => [], 'diagnostics' => [], 'changes' => [], 'preconditions' => [], 'planSha256' => null, 'message' => ''];
         $temporary = [];
         $previewShown = false;
@@ -187,11 +187,11 @@ final class RoutesCommand
             if ($root === false || !is_dir($root)) {
                 throw new RouteError('Project directory does not exist');
             }
-            $sourceFile = self::projectPath($root, 'config/routes.conf');
-            foreach (['config/routes.conf', 'config/http.conf'] as $relative) {
+            $sourceFile = self::projectPath($root, 'config/nginx.conf');
+            foreach (['config/nginx.conf'] as $relative) {
                 $file = self::projectPath($root, $relative);
                 if (!is_file($file) || !is_readable($file)) {
-                    throw new RouteError('Missing readable ' . $relative, 1, $file);
+                    throw new RouteError('Missing readable ' . $relative . '. The alpha routing format changed: migrate http.conf and routes.conf into maps followed by one server block in config/nginx.conf; see the HTTP routing migration guide.', 1, $file);
                 }
             }
             $inventory = NginxRoutes::read($root);
@@ -228,10 +228,7 @@ final class RoutesCommand
                     }
                     $candidate = tempnam(dirname($sourceFile), '.routes-check-');
                     $temporary[] = $candidate;
-                    file_put_contents($candidate, $plan['changes'][1]['text']);
-                    $httpCandidate = tempnam(dirname($sourceFile), '.http-check-');
-                    $temporary[] = $httpCandidate;
-                    file_put_contents($httpCandidate, $plan['changes'][0]['text']);
+                    file_put_contents($candidate, $plan['changes'][0]['text']);
                     foreach ($plan['changes'] as $change) {
                         if ($change['action'] === 'create') {
                             $code = tempnam(dirname($sourceFile), '.endpoint-check-');
@@ -240,7 +237,7 @@ final class RoutesCommand
                             Process::run([PHP_BINARY, '-n', '-l', $code]);
                         }
                     }
-                    self::validateConfiguration($root, $candidate, $httpCandidate);
+                    self::validateConfiguration($root, $candidate);
                     foreach ($temporary as $file) {
                         if (is_file($file)) unlink($file);
                     }

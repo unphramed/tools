@@ -7,7 +7,7 @@ namespace Unphramed\Tools;
 /** Syntax-check a disposable envelope for the supported profile; never start services. */
 final class ConfigurationCheck
 {
-    public static function check(string $root, string $routes, ?string $httpFile = null): void
+    public static function check(string $root, string $routes): void
     {
         foreach (['vendor/autoload.php', 'bootstrap.php'] as $file) {
             if (!is_file($root . '/' . $file)) {
@@ -30,23 +30,22 @@ final class ConfigurationCheck
             $bodyPath = self::nginxQuote($work . '/body');
             $fastcgiPath = self::nginxQuote($work . '/fastcgi');
             $web = self::nginxQuote($root . '/web');
-            $http = self::nginxQuote($httpFile ?? $root . '/config/http.conf');
+            $inventory = NginxRoutes::read($root, file_get_contents($routes));
+            if ($inventory['diagnostics']) throw new RouteError('Cannot validate an incomplete application configuration');
             $upstreams = '';
-            $inventory = NginxRoutes::read($root, file_get_contents($httpFile ?? $root . '/config/http.conf'), file_get_contents($routes));
             foreach (array_unique(array_column(array_filter($inventory['locations'], static fn($location) => $location['kind'] === 'endpoint'), 'pass')) as $pass) {
                 if (preg_match('/\A[a-z][a-z0-9_]*\z/D', $pass)) {
                     $upstreams .= 'upstream ' . $pass . ' { server 127.0.0.1:9001; }' . "\n";
                 }
             }
-            $hasRoot = in_array('/', array_column($inventory['locations'], 'path'), true);
-            $fallback = $hasRoot ? '' : 'location / { return 404; }';
             $routeFile = self::nginxQuote($routes);
             $params = self::nginxQuote($root . '/config/fastcgi-params.conf');
             mkdir($work . '/.runtime', 0700);
             mkdir($work . '/config', 0700);
             file_put_contents($work . '/config/fastcgi-params.conf', "include $params;\n");
             file_put_contents($work . '/.runtime/fastcgi-params.conf', "include $params;\n");
-            // Fixed loopback ports are syntax-test values only: no socket is opened.
+            // Supply a syntax-only environment, never read or alter a real deployment.
+            file_put_contents($work . '/.runtime/' . $inventory['environmentInclude'], "listen 127.0.0.1:8081;\nserver_name localhost;\nroot $web;\n");
             file_put_contents($work . '/.runtime/nginx.conf', <<<NGINX
 pid $nginxPid;
 error_log $nginxLog;
@@ -57,18 +56,8 @@ http {
     fastcgi_temp_path $fastcgiPath;
     types { text/css css; text/html html; }
     default_type application/octet-stream;
-    include $http;
     $upstreams
-    server {
-        listen 127.0.0.1:8081;
-        server_name localhost;
-        root $web;
-        location ~ ^/(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)(?:/|$) { return 404; }
-        location ~ \.php(?:/|$) { return 404; }
-        include $routeFile;
-        location /assets/ { try_files \$uri =404; }
-        $fallback
-    }
+    include $routeFile;
 }
 NGINX);
             $pid = self::iniQuote($work . '/fpm.pid');

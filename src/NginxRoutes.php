@@ -7,32 +7,64 @@ namespace Unphramed\Tools;
 /** Interpretation of the documented native profiles, never a runtime registry. */
 final class NginxRoutes
 {
-    public static function read(string $root, ?string $http = null, ?string $source = null): array
+    public static function read(string $root, ?string $source = null): array
     {
-        $http ??= file_get_contents($root . '/config/http.conf');
-        $source ??= file_get_contents($root . '/config/routes.conf');
-        $result = ['routes' => [], 'locations' => [], 'maps' => [], 'diagnostics' => [], 'checks' => []];
-        foreach (['config/http.conf' => $http, 'config/routes.conf' => $source] as $file => $text) {
-            try {
-                $nodes = (new NginxSyntax($text))->parse();
-                foreach ($nodes as $node) {
-                    try {
-                        if ($file === 'config/http.conf') {
-                            self::map($node, $result);
-                        } else {
-                            $result['locations'][] = self::location($node, $result, $root);
+        $source ??= file_get_contents($root . '/config/nginx.conf');
+        $file = $root . '/config/nginx.conf';
+        $result = ['routes' => [], 'locations' => [], 'maps' => [], 'diagnostics' => [], 'checks' => [], 'server' => null, 'environmentInclude' => null];
+        try {
+            $nodes = (new NginxSyntax($source))->parse();
+            foreach ($nodes as $node) {
+                try {
+                    if ($node['args'][0] === 'map') {
+                        if ($result['server'] !== null) throw new RouteError('Place maps before the server block');
+                        self::map($node, $result);
+                    } elseif ($node['args'] === ['server'] && $node['children'] !== null && $result['server'] === null) {
+                        $result['server'] = $node;
+                    } else {
+                        if (in_array($node['args'][0], ['http', 'events', 'pid', 'worker_processes', 'error_log'], true)) {
+                            throw new RouteError('This is a deployment envelope, not the application routing file. Migrate the former http.conf/routes.conf layout using the HTTP routing migration guide; keep the global Nginx envelope separate.');
                         }
-                    } catch (RouteError $error) {
-                        $result['diagnostics'][] = ['file' => $root . '/' . $file, 'line' => $node['line'], 'message' => $error->getMessage()];
+                        throw new RouteError('Expected method/status maps and exactly one application server block');
                     }
+                } catch (RouteError $error) {
+                    $result['diagnostics'][] = ['file' => $file, 'line' => $node['line'], 'message' => $error->getMessage()];
                 }
-            } catch (RouteError $error) {
-                $result['diagnostics'][] = ['file' => $root . '/' . $file, 'line' => $error->sourceLine, 'message' => $error->getMessage()];
             }
+            if ($result['server'] === null) throw new RouteError('Missing application server block');
+            $utilities = [];
+            foreach ($result['server']['children'] as $node) {
+                try {
+                    if ($node['args'][0] === 'include' && $node['children'] === null && count($node['args']) === 2) {
+                        if ($result['environmentInclude'] !== null || !preg_match('/\A[a-zA-Z0-9_-]+-server\.conf\z/D', $node['args'][1])) {
+                            throw new RouteError('Use one application-named environment include, for example read-only-server.conf');
+                        }
+                        $result['environmentInclude'] = $node['args'][1];
+                    } elseif ($kind = self::utility($node)) {
+                        if (isset($utilities[$kind])) throw new RouteError('Duplicate utility location: ' . $kind);
+                        $utilities[$kind] = true;
+                    } elseif ($node['args'][0] === 'location') {
+                        if (($node['args'][1] ?? '') === '~' && (!isset($utilities['method-protection']) || !isset($utilities['php-protection']))) {
+                            throw new RouteError('Place implementation-URL protection before parameter routes');
+                        }
+                        $result['locations'][] = self::location($node, $result, $root);
+                    } else {
+                        throw new RouteError('Unsupported application directive: ' . $node['args'][0] . '. Put deployment settings in the environment fragment.');
+                    }
+                } catch (RouteError $error) {
+                    $result['diagnostics'][] = ['file' => $file, 'line' => $node['line'], 'message' => $error->getMessage()];
+                }
+            }
+            if ($result['environmentInclude'] === null) throw new RouteError('Missing application-named environment include');
+            foreach (['method-protection', 'php-protection', 'fallback'] as $kind) {
+                if (!isset($utilities[$kind])) throw new RouteError('Missing utility location: ' . $kind);
+            }
+        } catch (RouteError $error) {
+            $result['diagnostics'][] = ['file' => $file, 'line' => $error->sourceLine, 'message' => $error->getMessage()];
         }
         foreach ($result['locations'] as $location) {
             if ($location['kind'] === 'redirect') {
-                $result['routes'][] = ['file' => $root . '/config/routes.conf', 'line' => $location['node']['line'], 'offset' => $location['node']['start'], 'kind' => 'redirect', 'path' => $location['path'], 'methods' => [], 'endpoint' => null, 'parameters' => [], 'parameter' => null, 'redirect' => $location['redirect']];
+                $result['routes'][] = ['file' => $root . '/config/nginx.conf', 'line' => $location['node']['line'], 'offset' => $location['node']['start'], 'kind' => 'redirect', 'path' => $location['path'], 'methods' => [], 'endpoint' => null, 'parameters' => [], 'parameter' => null, 'redirect' => $location['redirect']];
                 continue;
             }
             $groups = [];
@@ -40,10 +72,24 @@ final class NginxRoutes
                 $groups[$endpoint][] = $method;
             }
             foreach ($groups as $endpoint => $methods) {
-                $result['routes'][] = ['file' => $root . '/config/routes.conf', 'line' => $location['node']['line'], 'offset' => $location['node']['start'], 'kind' => 'endpoint', 'path' => $location['path'], 'methods' => $methods, 'endpoint' => $endpoint, 'parameters' => $location['parameters'], 'parameter' => $location['parameters'][0]['name'] ?? null];
+                $result['routes'][] = ['file' => $root . '/config/nginx.conf', 'line' => $location['node']['line'], 'offset' => $location['node']['start'], 'kind' => 'endpoint', 'path' => $location['path'], 'methods' => $methods, 'endpoint' => $endpoint, 'parameters' => $location['parameters'], 'parameter' => $location['parameters'][0]['name'] ?? null];
             }
         }
         return $result;
+    }
+
+    /** Only these exact utility shapes are excluded from the endpoint inventory. */
+    private static function utility(array $node): ?string
+    {
+        $return404 = [['return', '404'], null];
+        $children = $node['children'] === null ? null : NginxSyntax::shape($node['children']);
+        if ($children === [$return404]) {
+            if ($node['args'] === ['location', '~', '^/(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)(?:/|$)']) return 'method-protection';
+            if ($node['args'] === ['location', '~', '\\.php(?:/|$)']) return 'php-protection';
+            if ($node['args'] === ['location', '/']) return 'fallback';
+        }
+        if ($node['args'] === ['location', '/assets/'] && $children === [[['try_files', '$uri', '=404'], null]]) return 'assets';
+        return null;
     }
 
     private static function map(array $node, array &$result): void
@@ -137,7 +183,7 @@ final class NginxRoutes
             throw new RouteError('Script parameters and file-existence check must select the same mapped file');
         }
         $include = $directives['include'][1] ?? '';
-        if (count($directives['include'] ?? []) !== 2 || !in_array($include, ['fastcgi-params.conf', '../config/fastcgi-params.conf', $root . '/config/fastcgi-params.conf'], true)) {
+        if (count($directives['include'] ?? []) !== 2 || !in_array($include, ['fastcgi-params.conf', '../config/fastcgi-params.conf'], true)) {
             throw new RouteError('Use the project-owned config/fastcgi-params.conf include');
         }
         $pass = $directives['fastcgi_pass'][1] ?? '';
@@ -169,15 +215,15 @@ final class NginxRoutes
         $methods = array_keys($bindings);
         sort($allowed); sort($methods);
         if ($allowed !== $methods) {
-            $result['checks'][] = ['file' => $root . '/config/routes.conf', 'line' => $node['line'], 'message' => 'Allow must list exactly the mapped methods: ' . implode(', ', array_keys($bindings))];
+            $result['checks'][] = ['file' => $root . '/config/nginx.conf', 'line' => $node['line'], 'message' => 'Allow must list exactly the mapped methods: ' . implode(', ', array_keys($bindings))];
         }
         return $description + ['node' => $node, 'kind' => 'endpoint', 'bindings' => $bindings, 'variable' => $variable, 'include' => $include, 'pass' => $pass];
     }
 
     public static function fastcgiPass(string $pass): void
     {
-        if (!preg_match('~\A(?:[a-z][a-z0-9_]*|127\.0\.0\.1:[0-9]+|unix:/[A-Za-z0-9/_.-]+)\z~D', $pass)) {
-            throw new RouteError('Use a literal upstream name, loopback FastCGI address or Unix socket');
+        if (!preg_match('/\A[a-z][a-z0-9_]*\z/D', $pass)) {
+            throw new RouteError('Use a named FastCGI upstream; define its address or socket in the environment');
         }
     }
 }

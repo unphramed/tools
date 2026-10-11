@@ -67,7 +67,7 @@ final class RouteEditor
             throw new RouteError('FastCGI settings are ambiguous: supply --fastcgi-pass and --params-include');
         }
         NginxRoutes::fastcgiPass($pass);
-        if (!in_array($include, ['fastcgi-params.conf', '../config/fastcgi-params.conf', $root . '/config/fastcgi-params.conf'], true)) {
+        if (!in_array($include, ['fastcgi-params.conf', '../config/fastcgi-params.conf'], true)) {
             throw new RouteError('Select the project-owned FastCGI parameter include');
         }
         $base = '$unphramed_' . substr(hash('sha256', $description['path']), 0, 12);
@@ -93,35 +93,40 @@ final class RouteEditor
             $locationText .= "    fastcgi_param {$parameter['serverKey']} \${$parameter['capture']};\n";
         }
         $locationText .= "    fastcgi_pass $pass;\n}";
-        $routeFile = self::path($root, 'config/routes.conf');
-        $httpFile = self::path($root, 'config/http.conf');
+        $routeFile = self::path($root, 'config/nginx.conf');
         $source = file_get_contents($routeFile);
+        $server = $inventory['server'];
+        $indent = '    ';
+        $locationText = $indent . str_replace("\n", "\n" . $indent, $locationText);
         if ($selected === null) {
-            $candidate = $source . (str_ends_with($source, "\n") ? "\n" : "\n\n") . "$locationText\n";
+            // Insert before the server's closing brace, never outside its context.
+            $offset = $server['end'] - 1;
+            $lineStart = strrpos(substr($source, 0, $offset), "\n");
+            if ($lineStart !== false && trim(substr($source, $lineStart + 1, $offset - $lineStart - 1)) === '') $offset = $lineStart + 1;
+            $candidate = substr($source, 0, $offset) . "\n$locationText\n" . substr($source, $offset);
         } else {
             $node = $selected['node'];
-            // Preserve comments within the selected block, as well as all surrounding text.
             $old = substr($source, $node['start'], $node['end'] - $node['start']);
             $comments = (new NginxSyntax($old))->comments();
-            $locationText = implode("\n", $comments) . ($comments ? "\n" : '') . $locationText;
+            $locationText = implode("\n", $comments) . ($comments ? "\n" : '') . ltrim($locationText);
             $candidate = substr($source, 0, $node['start']) . $locationText . substr($source, $node['end']);
         }
-        $http = file_get_contents($httpFile) . $mapText;
+        $offset = $server['start'];
+        $candidate = substr($candidate, 0, $offset) . ltrim($mapText, "\n") . "\n" . substr($candidate, $offset);
         $changes = [
-            ['file' => $httpFile, 'action' => 'update', 'beforeSha256' => hash('sha256', file_get_contents($httpFile)), 'text' => $http],
             ['file' => $routeFile, 'action' => 'update', 'beforeSha256' => hash('sha256', $source), 'text' => $candidate],
         ];
         if (isset($options['--create-endpoint'])) {
             $changes[] = ['file' => $destination, 'action' => 'create', 'beforeSha256' => null, 'text' => "<?php\n\ndeclare(strict_types=1);\n\n// TODO: validate HTTP input, authorize the action and invoke your application.\n// Route captures are supplied in ROUTE_* FastCGI parameters; validate them here.\nheader('Content-Type: text/plain; charset=UTF-8');\nheader('Cache-Control: no-store');\nhttp_response_code(501);\necho 'Not implemented';\n"];
         }
         $preconditions = [];
-        foreach (array_unique(array_merge(['config/http.conf', 'config/routes.conf', 'config/fastcgi-params.conf', 'bootstrap.php', $endpoint], array_column(array_filter($inventory['routes'], static fn($route) => $route['kind'] === 'endpoint'), 'endpoint'))) as $relative) {
+        foreach (array_unique(array_merge(['config/nginx.conf', 'config/fastcgi-params.conf', 'bootstrap.php', $endpoint], array_column(array_filter($inventory['routes'], static fn($route) => $route['kind'] === 'endpoint'), 'endpoint'))) as $relative) {
             $file = self::path($root, $relative);
             $preconditions[] = ['file' => $file, 'sha256' => is_file($file) ? hash_file('sha256', $file) : null];
         }
         $plan = ['changes' => $changes, 'preconditions' => $preconditions];
         $plan['planSha256'] = hash('sha256', json_encode($plan, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
-        $plan['inventory'] = NginxRoutes::read($root, $http, $candidate);
+        $plan['inventory'] = NginxRoutes::read($root, $candidate);
         return $plan;
     }
 
