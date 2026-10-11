@@ -62,9 +62,7 @@ final class RoutesCommand
             echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), "\n";
             return;
         }
-        foreach ($result['diagnostics'] as $diagnostic) {
-            echo ConsoleOutput::style($diagnostic['file'] . ':' . $diagnostic['line'] . ': ' . $diagnostic['message'], '31'), "\n";
-        }
+        ConsoleOutput::diagnostics($result['diagnostics']);
         if ($previewShown) {
             if ($result['ok']) echo $result['message'], "\n";
             return;
@@ -81,12 +79,7 @@ final class RoutesCommand
             }
             ConsoleOutput::table(['METHOD', 'PATH', 'TARGET', 'SOURCE'], $rows);
         }
-        foreach ($result['changes'] as $change) {
-            echo "\n", ConsoleOutput::style($change['action'] . ' ' . $change['file'], '1'), "\n";
-            foreach (explode("\n", rtrim($change['text'], "\n")) as $line) {
-                echo ConsoleOutput::style('+' . $line, '32'), "\n";
-            }
-        }
+        ConsoleOutput::changes($result['changes']);
         if ($result['ok']) {
             echo $result['message'], "\n";
         }

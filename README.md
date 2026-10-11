@@ -5,7 +5,7 @@
   <img src="logo.svg" alt="Unphramed" width="280">
 </picture>
 
-Composer **development-only** tools for native Nginx method-to-file associations.
+Composer **development-only** tools for native Nginx routing and explicit PHP dependency factories.
 Apache support is not implemented. No release or remote package source is available.
 The website repository is private and is not an installation source for application users.
 
@@ -14,9 +14,25 @@ artifact, install with `composer require --dev unphramed/tools:0.1.0`.
 The consuming application chooses `require-dev`; Composer cannot enforce this
 from package metadata. Production HTTP behavior must work with `--no-dev`.
 
-The CLI provides grouped help and an aligned route listing. Terminal output uses
+Both CLIs provide grouped help, aligned inventory/factory tables and common diagnostic
+and change-preview formatting. Terminal output uses
 ANSI colors without additional dependencies. Colors are disabled for redirected
 output, when `NO_COLOR` is set or `TERM=dumb`; JSON output remains unstyled.
+
+## Refresh a private alpha artifact
+
+Private builds stay at `0.1.0` during the alpha phase. After the supplier
+replaces the ZIP in your configured Composer artifact repository, run:
+
+```sh
+composer remove --dev unphramed/tools
+composer --no-cache require --dev unphramed/tools:0.1.0
+```
+
+This temporarily removes the tools and their unused dependencies, then installs
+the new build and refreshes its checksum in `composer.lock`. Review the lock diff.
+A simple update can retain old files; reinstall alone can retain an old checksum.
+JSON protocol versions (routes v2 and DI v1) are independent of the package version.
 
 ## Commands and prerequisites
 
@@ -135,3 +151,169 @@ Former `config/http.conf` / `config/routes.conf`, maps-plus-server and per-route
 FastCGI include formats require
 manual migration to the server-included fragment documented on the website. The CLI
 rejects those formats and does not convert or modify deployment configuration.
+
+## Explicit dependency factories (private 0.1.0 prototype)
+
+The package also provides `vendor/bin/unphramed-di`. It uses `nikic/php-parser` as a
+Composer dependency of this development-only tool, not an application runtime
+container. The generated PHP needs neither package in production. The DI binary
+loads only tool/parser classes; it does not load the consuming application's
+Composer autoload files or execute its classes to discover constructors.
+
+## Interactive dependency assembly
+
+From the application's root, run:
+
+```sh
+vendor/bin/unphramed-di
+```
+
+The terminal assistant detects an existing class named `DI` and its file. If several
+exist, choose one; if none exists, enter the fully qualified class and destination
+PHP file. The parent directory must already exist. `--project DIR` selects another
+application without changing your working directory.
+
+Discovery scans only the project's main Composer PSR-4/PSR-0 autoload directories.
+Development-only classes and vendor classes are not offered; installed dependencies
+remain available when resolving constructors. No application PHP is executed.
+Classes with an existing compatible factory, including private factories, are already
+configured and are left untouched. Factories are recognized by their return type,
+not their name.
+
+Suggested DI additions are unconfigured classes whose required object-constructor
+dependencies reach an existing compatible factory, directly or transitively. The
+list shows one existing dependency that motivates each suggestion. Analysis stops
+at existing factories; their bodies and lifetimes remain opaque. Optional constructor
+parameters retain their defaults and do not establish a DI link.
+
+These suggestions are selected by default. Enter numbers separated by commas or
+spaces to select a subset, `all` for all suggestions, `none` to cancel, or `q` to
+quit. Selected classes become public factories; newly constructed dependencies
+outside the selection become private factories, including required helpers without
+constructors. Related classes needing manual configuration or ambiguous/colliding
+names are reported and skipped.
+
+Construction alone does not imply that a class needs a DI factory. The assistant
+does not classify objects by namespace or prescribe a model organization. Autonomous
+views, data objects and static utilities have no constructor link to DI and are not
+suggested merely because `new` would succeed. A DI link is a conservative heuristic,
+not proof that a constructor argument is a technical dependency rather than data.
+
+Enter `other` at the class selection to browse all remaining constructible classes.
+When there are no suggestions, the assistant offers the same list through
+`Show other constructible classes? [y/N]`. This opt-in list starts with no selection;
+Enter cancels. It supports autonomous components and projects with no existing
+factories. The advanced `generate --expose` command remains available for explicit
+choices and manual configuration. Unsupported unrelated classes do not produce
+constructor-diagnostic noise in the default suggestions.
+
+A second numbered selection chooses which new types to share. Pressing Enter
+keeps all new objects fresh. Existing factories retain their own lifetimes.
+Review the diff before answering `yes` to apply; Enter, `no`, or end of input
+cancels without writing. Source and destination changes after analysis invalidate
+the preview. Existing methods and surrounding PHP remain intact. The tool adds
+factories; it does not repair wiring inside existing methods.
+
+Without terminal input and output, the bare command displays help and never
+writes. Use `generate` for scripts and IDE clients; its JSON v1 and hash-based
+application contract are unchanged.
+
+## Advanced dependency assembly
+
+From a PSR-4 application containing `App\RatingSummary`, its formatting collaborators
+and a manually configured `App\DisplaySettings` getter (as in the website's
+standalone rating-summary exercise):
+
+```sh
+vendor/bin/unphramed-di generate --expose 'App\RatingSummary' --expose 'App\DisplaySettings'
+vendor/bin/unphramed-di generate --expose 'App\RatingSummary' --expose 'App\DisplaySettings' --json
+```
+
+The defaults are `--class 'App\DI' --target src/DI.php`; the parent directory must
+exist. Repeat `--expose` for public entry points and `--shared` for objects retained
+in a local static. Other newly generated reachable factories are private and return a fresh object
+on every call. Public/private and shared/new are independent decisions. Automatic
+method names use `get` plus the class's short name; use `--name 'App\RatingSummary=createRatingSummary'` to
+resolve a collision or choose a different name. Options are also accepted with
+`--project DIR`; the current application directory is otherwise used.
+
+The graph is inferred from concrete required constructor parameter types. Aliases,
+Composer PSR-4/PSR-0 sources from the project's autoload/autoload-dev and installed packages,
+constructor property promotion and resolved inherited constructors are supported.
+Optional parameters are omitted, retaining their PHP defaults. Required nullable
+class parameters still require an object; no implicit null is supplied.
+Classmap-only/custom autoloading, traits, variadic/by-reference parameters, required
+scalar/untyped/union/intersection parameters and non-public constructors require
+manual factories. Duplicate source candidates and dependency cycles are diagnosed.
+Symlinks and sources outside the selected project are refused in this prototype.
+
+Existing static factories with no required arguments and a compatible non-null
+class/interface return type are discovered by their types, not their names. A
+unique match is reused automatically. A compatible concrete implementation also
+matches an interface parameter. Each graph node's optional `candidates` list
+exposes the matching methods to IDE clients; this is an additive DI JSON v1 field.
+Several matches stop generation and require `--factory TYPE=METHOD`. Unresolvable
+return types cannot be inferred as matches. A private or protected factory cannot
+satisfy a public entry point without a developer decision.
+
+For example, a `RatingRepository(Connection $db, UserRepository $userRepository,
+Visitor $visitor)` constructor can call existing `getDbConnection()`,
+`getUserRepository()` and `getVisitor()` methods without three explicit mappings.
+These are application-provided contracts, not a prescribed repository or storage
+implementation. The tool never reads configuration from those method bodies.
+
+Requesting an existing compatible public getter again yields no changes, including
+when its body has been manually edited. The tool does not repair wiring inside an
+existing getter. To construct a separate graph, select a fresh `--name`; to change
+an existing getter's sharing, edit and test its PHP. `--shared` is rejected for a
+reused factory rather than silently changing its lifetime.
+
+Keep application configuration and implementation choices in manually written PHP,
+and choose a factory explicitly when necessary:
+
+```sh
+vendor/bin/unphramed-di generate --expose 'App\RatingSummary' --factory 'App\DisplaySettings=getDisplaySettings'
+```
+
+`getDisplaySettings` must already exist in the selected DI class, be static, require no
+arguments and declare a compatible non-null return type. It may be private unless
+its type is selected as a public entry point. Analysis stops at that method. Its
+body, name and lifetime remain application-owned; do not combine a manual factory
+with `--shared` or `--name` for the same type. Unknown internal types may be supplied
+by a factory returning exactly that type. The tool does not prove a manual factory's
+behavior or absence of hidden cycles.
+
+Review the full proposed file. Applying requires the hash from the successful
+preview, with identical choices:
+
+```sh
+vendor/bin/unphramed-di generate --expose 'App\RatingSummary' --expose 'App\DisplaySettings' \
+    --apply --expected-plan-sha256 HASH_FROM_PREVIEW
+```
+
+The apply command reanalyzes sources, checks the plan and all input hashes, and
+locks existing inputs while writing. New files use exclusive creation. Existing
+method bodies, comments and visibility are never rewritten; additions are inserted
+before the selected class's closing brace. Unique compatible getters are reused;
+ambiguity requires `--factory`, or a fresh `--name` for a separate graph. Existing DI classes
+with inheritance or traits are refused. No permanent generation manifest or service
+registry is created. Both final and abstract DI classes are supported: static
+factories must themselves be concrete; DI is never instantiated by the tool.
+The file becomes application-owned PHP.
+
+A failed analysis contains a partial graph and located diagnostics, but no changes
+or usable plan hash. Ordinary write failures attempt rollback; this is not a
+crash-safe filesystem transaction, and advisory locks do not constrain editors
+that ignore them. Review generated code and test the application wiring.
+
+DI uses independent JSON **version 1**, operation `generate`: `ok`, `graph`,
+`diagnostics`, `changes`, `preconditions`, `planSha256` and `message`. A graph node
+contains `type`, `method`, `visibility`, `lifetime` (`new`, `shared`, `manual`),
+`manual`, `dependencies`, `file` and `line`. Changes are full destination texts;
+preconditions include analyzed sources, Composer metadata, the destination, and
+absent candidate files. Success agrees with process exit status. Route JSON remains
+version 2. The PhpStorm generator requires this executable; route-only plugin
+versions can continue to use the existing route interface.
+
+This package and its dependency are supplied privately for the prototype. No
+Packagist release of `unphramed/tools` is implied by these commands.

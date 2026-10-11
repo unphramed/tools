@@ -1,12 +1,13 @@
 {
     "name": "unphramed/tools",
-    "description": "Development-only tools for explicit native Nginx method-to-PHP-file associations.",
+    "description": "Development-only tools for explicit native routing and PHP dependency assembly.",
     "type": "library",
     "require": {
         "php": ">=8.5",
         "ext-ctype": "*",
         "ext-posix": "*",
-        "composer-runtime-api": "^2.2"
+        "composer-runtime-api": "^2.2",
+        "nikic/php-parser": "^5.7"
     },
     "autoload": {
         "psr-4": {
@@ -14,7 +15,8 @@
         }
     },
     "bin": [
-        "bin/unphramed-routes"
+        "bin/unphramed-routes",
+        "bin/unphramed-di"
     ],
     "keywords": [
         "development",

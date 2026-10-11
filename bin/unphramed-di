@@ -1,0 +1,22 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// Composer's binary proxy supplies this path without loading application autoload.files.
+$vendor = dirname($_composer_autoload_path ?? __DIR__ . '/../vendor/autoload.php');
+$parser = $vendor . '/nikic/php-parser/lib/PhpParser/';
+if (!is_dir($parser)) {
+    fwrite(STDERR, "Install the Composer development package and its PHP parser dependency first.\n");
+    exit(1);
+}
+spl_autoload_register(static function (string $class) use ($parser): void {
+    foreach (['Unphramed\\Tools\\' => __DIR__ . '/../src/', 'PhpParser\\' => $parser] as $prefix => $directory) {
+        if (str_starts_with($class, $prefix)) {
+            $file = $directory . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+            if (is_file($file)) require $file;
+            return;
+        }
+    }
+});
+exit(Unphramed\Tools\DiCommand::run($argv));
