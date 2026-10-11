@@ -1,5 +1,10 @@
 # Unphramed tools — private prototype
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="logo-dark.svg">
+  <img src="logo.svg" alt="Unphramed" width="280">
+</picture>
+
 Composer **development-only** tools for native Nginx method-to-file associations.
 Apache support is not implemented. No release or remote package source is available.
 The website repository is private and is not an installation source for application users.
