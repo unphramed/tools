@@ -26,7 +26,7 @@ Composer autoloader. No Python, web-server reload or application execution is us
 vendor/bin/unphramed-routes list
 vendor/bin/unphramed-routes check
 # Existing target: no PHP file is modified.
-vendor/bin/unphramed-routes add --path /books --method GET --method HEAD --endpoint web/GET/books.php
+vendor/bin/unphramed-routes add --path /books --method GET --endpoint web/GET/books.php
 # New target: request a 501 skeleton explicitly.
 vendor/bin/unphramed-routes add --path '/books/{id:int}/{slug:slug}' --method PURGE --endpoint web/purge.php --create-endpoint
 ```
@@ -34,9 +34,9 @@ vendor/bin/unphramed-routes add --path '/books/{id:int}/{slug:slug}' --method PU
 Preview is the default. Only `--apply` writes. Use `--json` for version 2, and pass
 its `planSha256` to `--apply --expected-plan-sha256 HASH` when applying a reviewed
 preview. The guard covers HTTP maps, locations, shared parameters, bootstrap and
-endpoint inputs. `add-read` remains a compatibility command that explicitly selects
-GET and HEAD and requests a new endpoint. Its old route-only hash option is retained
-for compatibility but cannot guard the full preview; new clients must use the plan hash.
+endpoint inputs. Use `add --method GET --create-endpoint` to create a read endpoint.
+The earlier `add-read` convenience command has been removed: methods are always
+explicit. The old route-only hash option cannot guard the full preview; use the plan hash.
 
 JSON v2 returns `routes`, `diagnostics`, `changes`, `preconditions`, `planSha256`,
 `ok`, `operation` and `message`. Endpoint records group methods selecting one file;

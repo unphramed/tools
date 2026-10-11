@@ -127,14 +127,13 @@ final class RoutesCommand
         $temporary = [];
         try {
             if (!isset($argv[1]) || $argv[1] === '--help') {
-                echo "Usage: vendor/bin/unphramed-routes list|check|add|add-read [--project DIR] [--json]\n";
-                echo "add --path '/books/{id:int}/{slug:slug}' --method GET [--method HEAD] --endpoint web/GET/book.php [--create-endpoint] [--apply --expected-plan-sha256 HASH]\n";
-                echo "add-read is the compatibility command: GET and HEAD, creating a new endpoint. No server reload.\n";
+                echo "Usage: vendor/bin/unphramed-routes list|check|add [--project DIR] [--json]\n";
+                echo "add --path '/books/{id:int}/{slug:slug}' --method GET [--method METHOD] --endpoint web/GET/book.php [--create-endpoint] [--apply --expected-plan-sha256 HASH]\n";
                 echo "Optional --fastcgi-pass VALUE --params-include VALUE when no unambiguous existing connection exists.\n";
                 return 0;
             }
             $command = $argv[1];
-            if (!in_array($command, ['list', 'check', 'add', 'add-read'], true)) {
+            if (!in_array($command, ['list', 'check', 'add'], true)) {
                 throw new RouteError('Unknown operation');
             }
             $options = [];
@@ -156,10 +155,10 @@ final class RoutesCommand
                     throw new RouteError('Unknown option or missing value: ' . $key);
                 }
             }
-            $adding = in_array($command, ['add', 'add-read'], true);
+            $adding = $command === 'add';
             foreach (array_keys($options) as $key) {
                 if (!$adding && !in_array($key, ['--project', '--json'], true)) {
-                    throw new RouteError('Editing options belong to add or add-read');
+                    throw new RouteError('Editing options belong to add');
                 }
             }
             foreach (['--expected-plan-sha256', '--expected-routes-sha256'] as $guard) {
@@ -203,13 +202,6 @@ final class RoutesCommand
                     self::validateConfiguration($root, $sourceFile);
                     $result['message'] = 'Native dispatch, Allow, endpoints and isolated Nginx/FPM syntax passed. FastCGI connections and HTTP behavior were not verified.';
                 } else {
-                    if ($command === 'add-read') {
-                        if (isset($options['--method'])) {
-                            throw new RouteError('add-read already specifies GET and HEAD; use add for explicit methods');
-                        }
-                        $options['--method'] = ['GET', 'HEAD'];
-                        $options['--create-endpoint'] = true;
-                    }
                     if (isset($options['--expected-routes-sha256']) && !hash_equals($options['--expected-routes-sha256'], hash_file('sha256', $sourceFile))) {
                         throw new RouteError('Preview is stale: routes changed; preview again');
                     }
