@@ -95,7 +95,7 @@ final class RoutesCommand
         ConfigurationCheck::check($root, $routeFile, $httpFile);
     }
 
-    private static function outputResult(array $result, bool $json): void
+    private static function outputResult(array $result, bool $json, bool $previewShown = false): void
     {
         if ($json) {
             echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), "\n";
@@ -103,6 +103,10 @@ final class RoutesCommand
         }
         foreach ($result['diagnostics'] as $diagnostic) {
             echo $diagnostic['file'], ':', $diagnostic['line'], ': ', $diagnostic['message'], "\n";
+        }
+        if ($previewShown) {
+            if ($result['ok']) echo $result['message'], "\n";
+            return;
         }
         foreach ($result['routes'] as $route) {
             echo ($route['methods'] ? implode(', ', $route['methods']) : '*'), ' ', $route['path'], ' -> ', ($route['endpoint'] ?? ($route['redirect']['status'] . ' ' . $route['redirect']['target'])),
@@ -125,10 +129,13 @@ final class RoutesCommand
         $sourceFile = 'config/routes.conf';
         $result = ['version' => 2, 'operation' => $argv[1] ?? '', 'ok' => false, 'routes' => [], 'diagnostics' => [], 'changes' => [], 'preconditions' => [], 'planSha256' => null, 'message' => ''];
         $temporary = [];
+        $previewShown = false;
         try {
             if (!isset($argv[1]) || $argv[1] === '--help') {
                 echo "Usage: vendor/bin/unphramed-routes list|check|add [--project DIR] [--json]\n";
-                echo "add --path '/books/{id:int}/{slug:slug}' --method GET [--method METHOD] --endpoint web/GET/book.php [--create-endpoint] [--apply --expected-plan-sha256 HASH]\n";
+                echo "add --path '/users' [--method METHOD] [--endpoint web/custom.php] [--dry-run] [--expected-plan-sha256 HASH]\n";
+                echo "GET is the default. Endpoints are inferred; absent files become 501 skeletons, existing PHP is preserved.\n";
+                echo "add shows the diff and asks for confirmation; --dry-run only previews. JSON clients use --dry-run or an expected plan hash.\n";
                 echo "Optional --fastcgi-pass VALUE --params-include VALUE when no unambiguous existing connection exists.\n";
                 return 0;
             }
@@ -142,7 +149,7 @@ final class RoutesCommand
                 if (isset($options[$key]) && $key !== '--method') {
                     throw new RouteError('Duplicate option: ' . $key);
                 }
-                if (in_array($key, ['--apply', '--json', '--create-endpoint'], true)) {
+                if (in_array($key, ['--dry-run', '--json', '--create-endpoint'], true)) {
                     $options[$key] = true;
                 } elseif (in_array($key, ['--project', '--path', '--endpoint', '--method', '--fastcgi-pass', '--params-include', '--expected-plan-sha256', '--expected-routes-sha256'], true) && isset($argv[$i + 1]) && !str_starts_with($argv[$i + 1], '--')) {
                     $value = $argv[++$i];
@@ -162,12 +169,15 @@ final class RoutesCommand
                 }
             }
             foreach (['--expected-plan-sha256', '--expected-routes-sha256'] as $guard) {
-                if (isset($options[$guard]) && (!isset($options['--apply']) || preg_match('/\A[a-f0-9]{64}\z/D', $options[$guard]) !== 1)) {
-                    throw new RouteError($guard . ' requires --apply and a lowercase SHA-256');
+                if (isset($options[$guard]) && (isset($options['--dry-run']) || preg_match('/\A[a-f0-9]{64}\z/D', $options[$guard]) !== 1)) {
+                    throw new RouteError($guard . ' requires application (no --dry-run) and a lowercase SHA-256');
                 }
             }
             if ($command === 'add' && isset($options['--expected-routes-sha256'])) {
                 throw new RouteError('Use --expected-plan-sha256: additions can modify both HTTP maps and locations');
+            }
+            if ($adding && $json && !isset($options['--dry-run']) && !isset($options['--expected-plan-sha256'])) {
+                throw new RouteError('--json requires --dry-run for a preview, or --expected-plan-sha256 to apply a reviewed plan.');
             }
             $root = realpath($options['--project'] ?? getcwd());
             if ($root === false || !is_dir($root)) {
@@ -227,13 +237,25 @@ final class RoutesCommand
                         }
                     }
                     self::validateConfiguration($root, $candidate, $httpCandidate);
+                    foreach ($temporary as $file) {
+                        if (is_file($file)) unlink($file);
+                    }
                     $result['changes'] = $plan['changes'];
                     $result['preconditions'] = $plan['preconditions'];
                     $result['planSha256'] = $plan['planSha256'];
-                    $result['message'] = 'Preview only. Use --apply to write these changes. Created endpoints return 501; existing PHP is preserved.';
-                    if (isset($options['--apply'])) {
-                        RouteEditor::apply($root, $plan);
-                        $result['message'] = 'Associations applied. No service reloaded. Restart only your dedicated Nginx through your application workflow.';
+                    $result['message'] = 'Dry run only. Run add without --dry-run to review and confirm these changes. Created endpoints return 501; existing PHP is preserved.';
+                    if (!isset($options['--dry-run'])) {
+                        $confirmed = true;
+                        if (!isset($options['--expected-plan-sha256'])) {
+                            $confirmed = CliConfirmation::confirm($plan['changes']);
+                            $previewShown = true;
+                        }
+                        if ($confirmed) {
+                            RouteEditor::apply($root, $plan);
+                            $result['message'] = 'Associations applied. No service reloaded. Restart only your dedicated Nginx through your application workflow.';
+                        } else {
+                            $result['message'] = 'Cancelled. No files changed.';
+                        }
                     }
                 }
             }
@@ -250,7 +272,7 @@ final class RoutesCommand
                 }
             }
         }
-        self::outputResult($result, $json);
+        self::outputResult($result, $json, $previewShown);
         return $result['ok'] ? 0 : 1;
     }
 }

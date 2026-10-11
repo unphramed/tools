@@ -77,6 +77,22 @@ final class RoutePath
         return $description;
     }
 
+    /** Derive an implementation path from one explicit method and a validated public path. */
+    public static function inferEndpoint(string $path, string $method): string
+    {
+        self::describe($path);
+        self::method($method);
+        $segments = [];
+        foreach ($path === '/' ? [] : explode('/', substr($path, 1)) as $part) {
+            if (preg_match('/\\A\\{([a-z][a-z0-9_]*)(?::(int|slug|string))?\\}\\z/D', $part, $match)) {
+                $segments[] = '_' . $match[1] . '_' . ($match[2] ?? 'int');
+            } else {
+                $segments[] = str_starts_with($part, '_') ? '_' . $part : $part;
+            }
+        }
+        return 'web/' . $method . '/' . ($segments ? implode('/', $segments) . '/' : '') . 'index.php';
+    }
+
     public static function endpoint(string $endpoint): void
     {
         if (!preg_match('~\Aweb/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.php\z~D', $endpoint)) {

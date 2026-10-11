@@ -26,22 +26,21 @@ final class RouteEditor
     public static function preview(string $root, array $options, array $inventory): array
     {
         $description = RoutePath::describe($options['--path'] ?? '');
-        $endpoint = $options['--endpoint'] ?? '';
-        RoutePath::endpoint($endpoint);
-        $methods = $options['--method'] ?? [];
+        $methods = $options['--method'] ?? ['GET'];
         if (!$methods || count(array_unique($methods)) !== count($methods)) {
-            throw new RouteError('Supply unique --method values explicitly');
+            throw new RouteError('Supply unique --method values');
         }
-        foreach ($methods as $method) {
-            RoutePath::method($method);
+        foreach ($methods as $method) RoutePath::method($method);
+        if (!isset($options['--endpoint']) && count($methods) !== 1) {
+            throw new RouteError('Choose one method for endpoint inference, or specify --endpoint to share a file explicitly.');
         }
+        $endpoint = $options['--endpoint'] ?? RoutePath::inferEndpoint($options['--path'], $methods[0]);
+        RoutePath::endpoint($endpoint);
         $destination = self::path($root, $endpoint);
         if (isset($options['--create-endpoint']) && file_exists($destination)) {
             throw new RouteError('Endpoint already exists; creation never overwrites a file');
         }
-        if (!isset($options['--create-endpoint']) && !is_file($destination)) {
-            throw new RouteError('Endpoint missing: select an existing PHP file or use --create-endpoint');
-        }
+        if (!is_file($destination)) $options['--create-endpoint'] = true;
         $selected = null;
         foreach ($inventory['locations'] as $location) {
             if ($location['path'] === $description['path']) {

@@ -27,16 +27,41 @@ vendor/bin/unphramed-routes list
 vendor/bin/unphramed-routes check
 # Existing target: no PHP file is modified.
 vendor/bin/unphramed-routes add --path /books --method GET --endpoint web/GET/books.php
-# New target: request a 501 skeleton explicitly.
-vendor/bin/unphramed-routes add --path '/books/{id:int}/{slug:slug}' --method PURGE --endpoint web/purge.php --create-endpoint
+# Inferred target: preview, then review and confirm to create a missing 501 skeleton.
+vendor/bin/unphramed-routes add --path '/books/{id:int}/{slug:slug}' --method PURGE --dry-run
+vendor/bin/unphramed-routes add --path '/books/{id:int}/{slug:slug}' --method PURGE
 ```
 
-Preview is the default. Only `--apply` writes. Use `--json` for version 2, and pass
-its `planSha256` to `--apply --expected-plan-sha256 HASH` when applying a reviewed
-preview. The guard covers HTTP maps, locations, shared parameters, bootstrap and
-endpoint inputs. Use `add --method GET --create-endpoint` to create a read endpoint.
-The earlier `add-read` convenience command has been removed: methods are always
-explicit. The old route-only hash option cannot guard the full preview; use the plan hash.
+`add` displays the diff and asks `Apply these changes? [y/N]`. Only `y` or `yes`
+writes; Enter, EOF or another answer cancels. Use `--dry-run` to preview only.
+GET is the default method. An absent endpoint becomes a 501 skeleton; an existing
+file is reused without changes. `--endpoint` overrides the inferred path.
+
+```sh
+vendor/bin/unphramed-routes add --path /users
+vendor/bin/unphramed-routes add --path /users --dry-run
+vendor/bin/unphramed-routes add --path /users --method POST
+vendor/bin/unphramed-routes add --path /users --endpoint web/custom/users.php
+```
+
+Endpoint inference is a tooling convention, not a runtime dispatcher. Append
+`index.php` beneath `web/METHOD/` and one directory per route segment: `/` becomes
+`web/GET/index.php`, `/users` becomes `web/GET/users/index.php`, and
+`/users/{id:int}` becomes `web/GET/users/_id_int/index.php`. Untyped `{id}` means
+`{id:int}`. Parameter directories use `_name_type`; literals beginning with `_`
+receive one additional `_` to keep them distinct. No singularization or model
+naming is guessed. Several methods in one addition require an explicit endpoint
+because sharing a handler is a deliberate choice. Native Nginx remains authoritative:
+inference neither rewrites existing routes nor requires every application to adopt it.
+
+For scripts and IDE clients, preview with `--dry-run --json`, then run the same
+addition with `--expected-plan-sha256 HASH` (without `--dry-run`). It applies the
+reviewed plan without prompting. JSON cannot prompt, and redirected terminal
+input/output cannot implicitly approve writes. Input hashes are checked at application,
+including after interactive confirmation. `--apply` is no longer supported.
+The `--create-endpoint` option remains a strict request for a new file and refuses
+an existing destination; it is unnecessary for ordinary additions. Neither existing
+PHP nor existing method associations are overwritten.
 
 JSON v2 returns `routes`, `diagnostics`, `changes`, `preconditions`, `planSha256`,
 `ok`, `operation` and `message`. Endpoint records group methods selecting one file;
