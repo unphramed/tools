@@ -10,7 +10,7 @@ Apache support is not implemented. No release or remote package source is availa
 The website repository is private and is not an installation source for application users.
 
 After obtaining the package through a separately supplied repository or private
-artifact, install with `composer require --dev unphramed/tools:0.2.0-dev`.
+artifact, install with `composer require --dev unphramed/tools:0.1.0`.
 The consuming application chooses `require-dev`; Composer cannot enforce this
 from package metadata. Production HTTP behavior must work with `--no-dev`.
 
