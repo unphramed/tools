@@ -26,11 +26,12 @@ final class CliConfirmation
             $start = max(0, $prefix - 3);
             $oldEnd = min(count($old), count($old) - $suffix + 3);
             $newEnd = min(count($new), count($new) - $suffix + 3);
-            echo "\n--- ", $change['action'] === 'create' ? '/dev/null' : $change['file'], "\n+++ ", $change['file'], "\n";
+            echo "\n", ConsoleOutput::style('--- ' . ($change['action'] === 'create' ? '/dev/null' : $change['file']), '1'), "\n";
+            echo ConsoleOutput::style('+++ ' . $change['file'], '1'), "\n";
             echo '@@ -', $old ? $start + 1 : 0, ',', $oldEnd - $start, ' +', $new ? $start + 1 : 0, ',', $newEnd - $start, " @@\n";
             foreach (array_slice($old, $start, $prefix - $start) as $line) echo ' ', $line, "\n";
-            foreach (array_slice($old, $prefix, count($old) - $suffix - $prefix) as $line) echo '-', $line, "\n";
-            foreach (array_slice($new, $prefix, count($new) - $suffix - $prefix) as $line) echo '+', $line, "\n";
+            foreach (array_slice($old, $prefix, count($old) - $suffix - $prefix) as $line) echo ConsoleOutput::style('-' . $line, '31'), "\n";
+            foreach (array_slice($new, $prefix, count($new) - $suffix - $prefix) as $line) echo ConsoleOutput::style('+' . $line, '32'), "\n";
             foreach (array_slice($new, count($new) - $suffix, $newEnd - (count($new) - $suffix)) as $line) echo ' ', $line, "\n";
         }
         echo "\nApply these changes? [y/N] ";

@@ -102,20 +102,28 @@ final class RoutesCommand
             return;
         }
         foreach ($result['diagnostics'] as $diagnostic) {
-            echo $diagnostic['file'], ':', $diagnostic['line'], ': ', $diagnostic['message'], "\n";
+            echo ConsoleOutput::style($diagnostic['file'] . ':' . $diagnostic['line'] . ': ' . $diagnostic['message'], '31'), "\n";
         }
         if ($previewShown) {
             if ($result['ok']) echo $result['message'], "\n";
             return;
         }
-        foreach ($result['routes'] as $route) {
-            echo ($route['methods'] ? implode(', ', $route['methods']) : '*'), ' ', $route['path'], ' -> ', ($route['endpoint'] ?? ($route['redirect']['status'] . ' ' . $route['redirect']['target'])),
-                ' (', $route['file'], ':', $route['line'], ")\n";
+        if ($result['routes']) {
+            $rows = [];
+            foreach ($result['routes'] as $route) {
+                $rows[] = [
+                    $route['methods'] ? implode(', ', $route['methods']) : '*',
+                    $route['path'],
+                    $route['endpoint'] ?? ($route['redirect']['status'] . ' ' . $route['redirect']['target']),
+                    $route['file'] . ':' . $route['line'],
+                ];
+            }
+            ConsoleOutput::table(['METHOD', 'PATH', 'TARGET', 'SOURCE'], $rows);
         }
         foreach ($result['changes'] as $change) {
-            echo "\n", $change['action'], ' ', $change['file'], "\n";
+            echo "\n", ConsoleOutput::style($change['action'] . ' ' . $change['file'], '1'), "\n";
             foreach (explode("\n", rtrim($change['text'], "\n")) as $line) {
-                echo '+', $line, "\n";
+                echo ConsoleOutput::style('+' . $line, '32'), "\n";
             }
         }
         if ($result['ok']) {
@@ -132,11 +140,7 @@ final class RoutesCommand
         $previewShown = false;
         try {
             if (!isset($argv[1]) || $argv[1] === '--help') {
-                echo "Usage: vendor/bin/unphramed-routes list|check|add [--project DIR] [--json]\n";
-                echo "add --path '/users' [--method METHOD] [--endpoint web/custom.php] [--dry-run] [--expected-plan-sha256 HASH]\n";
-                echo "GET is the default. Endpoints are inferred; absent files become 501 skeletons, existing PHP is preserved.\n";
-                echo "add shows the diff and asks for confirmation; --dry-run only previews. JSON clients use --dry-run or an expected plan hash.\n";
-                echo "Optional --fastcgi-pass VALUE --params-include VALUE when no unambiguous existing connection exists.\n";
+                ConsoleOutput::help($json);
                 return 0;
             }
             $command = $argv[1];

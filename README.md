@@ -14,6 +14,10 @@ artifact, install with `composer require --dev unphramed/tools:0.1.0`.
 The consuming application chooses `require-dev`; Composer cannot enforce this
 from package metadata. Production HTTP behavior must work with `--no-dev`.
 
+The CLI provides grouped help and an aligned route listing. Terminal output uses
+ANSI colors without additional dependencies. Colors are disabled for redirected
+output, when `NO_COLOR` is set or `TERM=dumb`; JSON output remains unstyled.
+
 ## Commands and prerequisites
 
 The installed `vendor/bin/unphramed-routes` targets the current directory or explicit
