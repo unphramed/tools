@@ -97,7 +97,10 @@ TRACE and CONNECT; it does not promise every HTTP token can be served by Nginx.
 
 Use existing `.php` targets under `web/` or request a new skeleton. Method directories
 are a convention, not a generator requirement. Existing PHP is never overwritten.
-When extending a location, fresh maps preserve other locations sharing its original
+Generated locations use a literal `Allow` header with `always`, including on successful
+responses. Existing status-dependent Allow maps remain supported.
+
+When extending a location, fresh method maps preserve other locations sharing its original
 maps. Its comments and all unrelated source text are retained; the affected location's
 formatting can change in the preview. Old maps remain untouched rather than being
 removed without proving they are unused.

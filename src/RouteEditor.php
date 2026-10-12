@@ -72,23 +72,22 @@ final class RouteEditor
         }
         $base = '$unphramed_' . substr(hash('sha256', $description['path']), 0, 12);
         $suffix = 0;
-        while (isset($inventory['maps'][$base . '_handler']) || isset($inventory['maps'][$base . '_allow'])) {
+        while (isset($inventory['maps'][$base . '_handler'])) {
             $base = '$unphramed_' . substr(hash('sha256', $description['path']), 0, 12) . '_' . ++$suffix;
         }
         $handler = $base . '_handler';
-        $allow = $base . '_allow';
         $mapText = "\nmap \$request_method $handler {\n    default \"\";\n";
         foreach ($bindings as $method => $target) {
             $mapText .= "    $method " . substr($target, 4) . ";\n";
         }
         $allowText = implode(', ', array_keys($bindings));
-        $mapText .= "}\n\nmap \$status $allow {\n    default \"\";\n    405 \"$allowText\";\n}\n";
+        $mapText .= "}\n";
         if ($selected !== null) {
             // Reuse the original capture/environment contract when extending a route.
             $description = $selected;
         }
         $pattern = $description['modifier'] === '~' ? '"' . $description['pattern'] . '"' : $description['pattern'];
-        $locationText = "location {$description['modifier']} $pattern {\n    add_header Allow $allow always;\n    if ($handler = \"\") { return 405; }\n    try_files /$handler =404;\n    include \"$include\";\n    fastcgi_param SCRIPT_FILENAME \$document_root/$handler;\n    fastcgi_param SCRIPT_NAME /$handler;\n";
+        $locationText = "location {$description['modifier']} $pattern {\n    add_header Allow \"$allowText\" always;\n    if ($handler = \"\") { return 405; }\n    try_files /$handler =404;\n    include \"$include\";\n    fastcgi_param SCRIPT_FILENAME \$document_root/$handler;\n    fastcgi_param SCRIPT_NAME /$handler;\n";
         foreach ($description['parameters'] as $parameter) {
             $locationText .= "    fastcgi_param {$parameter['serverKey']} \${$parameter['capture']};\n";
         }
