@@ -56,45 +56,6 @@ final class RoutesCommand
         }
     }
 
-    private static function validateConfiguration(string $root, string $routeFile): void
-    {
-        $params = self::projectPath($root, 'config/fastcgi-params.conf');
-        if (!is_file($params)) {
-            throw new RouteError('Missing config/fastcgi-params.conf');
-        }
-        try {
-            $nodes = (new NginxSyntax(file_get_contents($params)))->parse();
-        } catch (RouteError $error) {
-            throw new RouteError($error->getMessage(), $error->sourceLine, $params);
-        }
-        $expected = [
-            'QUERY_STRING' => '$query_string', 'REQUEST_METHOD' => '$request_method',
-            'CONTENT_TYPE' => '$content_type', 'CONTENT_LENGTH' => '$content_length',
-            'REQUEST_URI' => '$request_uri', 'DOCUMENT_URI' => '$document_uri',
-            'DOCUMENT_ROOT' => '$document_root', 'SERVER_PROTOCOL' => '$server_protocol',
-            'REQUEST_SCHEME' => '$scheme', 'HTTPS' => '$https',
-            'GATEWAY_INTERFACE' => 'CGI/1.1', 'SERVER_SOFTWARE' => 'nginx',
-            'REMOTE_ADDR' => '$remote_addr', 'REMOTE_PORT' => '$remote_port',
-            'SERVER_ADDR' => '$server_addr', 'SERVER_PORT' => '$server_port',
-            'SERVER_NAME' => '$server_name', 'REDIRECT_STATUS' => '200', 'HTTP_PROXY' => '',
-        ];
-        foreach ($nodes as $node) {
-            $key = $node['args'][1] ?? '';
-            $args = ['fastcgi_param', $key, $expected[$key] ?? null];
-            if ($key === 'HTTPS') {
-                $args[] = 'if_not_empty';
-            }
-            if (!array_key_exists($key, $expected) || $node['children'] !== null || $node['args'] !== $args) {
-                throw new RouteError('Shared FastCGI parameters differ from the supported profile', $node['line'], $params);
-            }
-            unset($expected[$key]);
-        }
-        if ($expected) {
-            throw new RouteError('Missing shared FastCGI parameters: ' . implode(', ', array_keys($expected)), 1, $params);
-        }
-        ConfigurationCheck::check($root, $routeFile);
-    }
-
     private static function outputResult(array $result, bool $json, bool $previewShown = false): void
     {
         if ($json) {
@@ -155,7 +116,7 @@ final class RoutesCommand
                 }
                 if (in_array($key, ['--dry-run', '--json', '--create-endpoint'], true)) {
                     $options[$key] = true;
-                } elseif (in_array($key, ['--project', '--path', '--endpoint', '--method', '--fastcgi-pass', '--params-include', '--expected-plan-sha256', '--expected-routes-sha256'], true) && isset($argv[$i + 1]) && !str_starts_with($argv[$i + 1], '--')) {
+                } elseif (in_array($key, ['--project', '--path', '--endpoint', '--method', '--expected-plan-sha256', '--expected-routes-sha256'], true) && isset($argv[$i + 1]) && !str_starts_with($argv[$i + 1], '--')) {
                     $value = $argv[++$i];
                     if ($key === '--method') {
                         $options[$key][] = $value;
@@ -178,7 +139,7 @@ final class RoutesCommand
                 }
             }
             if ($command === 'add' && isset($options['--expected-routes-sha256'])) {
-                throw new RouteError('Use --expected-plan-sha256: additions can modify both HTTP maps and locations');
+                throw new RouteError('Use --expected-plan-sha256: additions must guard all configuration and endpoint inputs');
             }
             if ($adding && $json && !isset($options['--dry-run']) && !isset($options['--expected-plan-sha256'])) {
                 throw new RouteError('--json requires --dry-run for a preview, or --expected-plan-sha256 to apply a reviewed plan.');
@@ -191,7 +152,7 @@ final class RoutesCommand
             foreach (['config/nginx.conf'] as $relative) {
                 $file = self::projectPath($root, $relative);
                 if (!is_file($file) || !is_readable($file)) {
-                    throw new RouteError('Missing readable ' . $relative . '. The alpha routing format changed: migrate http.conf and routes.conf into maps followed by one server block in config/nginx.conf; see the HTTP routing migration guide.', 1, $file);
+                    throw new RouteError('Missing readable ' . $relative . '. The alpha routing format changed: migrate former maps/server or http.conf/routes.conf layouts into locations included inside the environment server block in config/nginx.conf; see the HTTP routing migration guide.', 1, $file);
                 }
             }
             $inventory = NginxRoutes::read($root);
@@ -203,7 +164,7 @@ final class RoutesCommand
                 return 1;
             }
             if ($command === 'list') {
-                $result['message'] = 'Inventory read directly from Nginx. Run check to verify endpoints, Allow and isolated server syntax.';
+                $result['message'] = 'Inventory read directly from Nginx. Run check to verify endpoints and method/Allow consistency. Validate the full Nginx configuration through your environment.';
             } else {
                 if ($inventory['checks']) {
                     $result['diagnostics'] = $inventory['checks'];
@@ -213,8 +174,7 @@ final class RoutesCommand
                 }
                 self::validateTargets($root, array_filter($inventory['routes'], static fn($route) => $route['kind'] === 'endpoint'));
                 if ($command === 'check') {
-                    self::validateConfiguration($root, $sourceFile);
-                    $result['message'] = 'Native dispatch, Allow, endpoints and isolated Nginx/FPM syntax passed. FastCGI connections and HTTP behavior were not verified.';
+                    $result['message'] = 'Supported route syntax, method/Allow consistency and PHP endpoint syntax passed. Nginx configuration, PHP-FPM and HTTP behavior must be checked in your environment.';
                 } else {
                     if (isset($options['--expected-routes-sha256']) && !hash_equals($options['--expected-routes-sha256'], hash_file('sha256', $sourceFile))) {
                         throw new RouteError('Preview is stale: routes changed; preview again');
@@ -226,9 +186,6 @@ final class RoutesCommand
                     if (isset($options['--expected-plan-sha256']) && !hash_equals($options['--expected-plan-sha256'], $plan['planSha256'])) {
                         throw new RouteError('Preview is stale: configuration or endpoint changed; preview again');
                     }
-                    $candidate = tempnam(dirname($sourceFile), '.routes-check-');
-                    $temporary[] = $candidate;
-                    file_put_contents($candidate, $plan['changes'][0]['text']);
                     foreach ($plan['changes'] as $change) {
                         if ($change['action'] === 'create') {
                             $code = tempnam(dirname($sourceFile), '.endpoint-check-');
@@ -237,7 +194,6 @@ final class RoutesCommand
                             Process::run([PHP_BINARY, '-n', '-l', $code]);
                         }
                     }
-                    self::validateConfiguration($root, $candidate);
                     foreach ($temporary as $file) {
                         if (is_file($file)) unlink($file);
                     }
@@ -253,7 +209,7 @@ final class RoutesCommand
                         }
                         if ($confirmed) {
                             RouteEditor::apply($root, $plan);
-                            $result['message'] = 'Associations applied. No service reloaded. Restart only your dedicated Nginx through your application workflow.';
+                            $result['message'] = 'Associations applied. No service reloaded. Activate the updated routes through your environment workflow.';
                         } else {
                             $result['message'] = 'Cancelled. No files changed.';
                         }

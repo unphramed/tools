@@ -21,15 +21,12 @@ output, when `NO_COLOR` is set or `TERM=dumb`; JSON output remains unstyled.
 ## Commands and prerequisites
 
 The installed `vendor/bin/unphramed-routes` targets the current directory or explicit
-`--project DIR`. PHP 8.5 with ctype/posix is required; `check` and additions also
-require Nginx and PHP-FPM on PATH. The application supplies `config/nginx.conf`,
-its project-owned `config/fastcgi-params.conf`, bootstrap and
-Composer autoloader. The routing file contains method/status maps followed by one
-`server` block, an application-named `*-server.conf` environment include, route
-locations and the exact utility locations documented on the website. Utilities
-are excluded from the inventory; unsupported syntax and multiple servers block edits.
-Ports, roots, TLS and upstream addresses belong to the environment.
-No Python, web-server reload or application execution is used by the CLI.
+`--project DIR`. PHP 8.5 with ctype/posix is required. The application supplies
+`config/nginx.conf` and its PHP targets. The routing fragment contains locations,
+server-level direct-script guards and a fallback, included inside an environment-owned
+virtual host. The CLI parses this supported syntax and lints endpoints; it needs no
+Nginx, PHP-FPM, Python, distribution configuration files or server settings.
+It never generates a server configuration, starts a service or executes the application.
 
 ```sh
 vendor/bin/unphramed-routes list
@@ -75,41 +72,26 @@ PHP nor existing method associations are overwritten.
 JSON v2 returns `routes`, `diagnostics`, `changes`, `preconditions`, `planSha256`,
 `ok`, `operation` and `message`. Endpoint records group methods selecting one file;
 redirect records have `kind: redirect`, `endpoint: null`, empty `methods` (unrestricted),
-and a status/target. `parameters` contains name, type, capture and serverKey.
+and a status/target. `parameters` contains name, type, capture and `source: "requestPath"`. This replaces the former
+`serverKey` metadata: path values are extracted by the endpoint from `REQUEST_URI`,
+not supplied as custom FastCGI parameters. Refresh CLI and IDE together for this alpha profile.
 Changes use `update` or `create` with the complete proposed text and the previous
 SHA-256 (`null` for a new file). Preconditions list all checked inputs with their
 SHA-256 or required absence. This interface requires updating the IDE plugin together.
 
 ## Native profiles
 
-Both documented profiles are supported: shared method-directory maps and
-resource-specific file maps. Variable names and literal upstream names are
-application-owned. Exact paths (including `/`), local redirects and several typed
-captures are interpreted. Parameters are `{name:int}` (1–999999999), `{name:slug}`
-(lowercase alphanumeric words separated by hyphens), and `{name:string}` (one
-normalized segment of 1–255 bytes). Historical `{name}` means integer.
-Captured values use explicit `ROUTE_*` FastCGI parameters, separate from query fields.
+The supported profile uses location-local method guards, explicit literal endpoint
+selection and `rewrite ^ TARGET last` to the environment’s common PHP location.
+Each admitted method is explicit. Multiple methods can reuse one PHP file; different
+files on one public path use native `set` assignments with an empty default and 405 guard.
+Custom methods follow Nginx's parser limits. Typed routes support int/slug/string captures
+validated by the endpoint against the original request path. Unknown syntax blocks edits rather than guessing.
 
-Methods are explicit; adding GET does not add HEAD or OPTIONS. Standard and custom
-methods use the same mechanism. The current Nginx HTTP/1 parser accepts uppercase
-letters, hyphens and underscores in method names. This FastCGI profile excludes
-TRACE and CONNECT; it does not promise every HTTP token can be served by Nginx.
-
-Use existing `.php` targets under `web/` or request a new skeleton. Method directories
-are a convention, not a generator requirement. Existing PHP is never overwritten.
-Generated locations use a literal `Allow` header with `always`, including on successful
-responses. Existing status-dependent Allow maps remain supported.
-
-When extending a location, fresh method maps preserve other locations sharing its original
-maps. Its comments and all unrelated source text are retained; the affected location's
-formatting can change in the preview. Old maps remain untouched rather than being
-removed without proving they are unused.
-
-FastCGI settings are inferred only when unambiguous; otherwise supply
-`--fastcgi-pass UPSTREAM_NAME` and `--params-include VALUE`. Supported parameter includes
-are `fastcgi-params.conf` and `../config/fastcgi-params.conf`, resolved relative to
-the main Nginx configuration. FastCGI destinations must be named upstreams; their
-addresses or sockets are provided by the environment, not the routing source.
+Generated locations list their methods in a literal `Allow` header with `always`.
+The header is returned on 405; accepted requests continue to the common PHP location.
+Extending one location preserves captures, comments and all
+unrelated source text. No shared method map is changed and no PHP file is reorganized.
 
 `list` is useful even when Allow is wrong; `check` reports the mismatch and edits are
 blocked. Unsupported syntax yields located diagnostics, a nonzero exit and an explicitly
@@ -119,11 +101,10 @@ even when a carefully ordered hand-written configuration could resolve them.
 
 ## Verification limits
 
-`check` lints targets and tests a disposable Nginx/FPM envelope. Named upstreams are
-substituted with loopback syntax-test destinations; socket targets are never connected.
-This does not validate the application's actual envelope, live FPM connection,
-authentication, CSRF or HTTP behavior. Run the application's own configuration and
-HTTP checks before deploying or restarting its dedicated processes.
+`check` parses supported application route directives, checks method/Allow consistency
+and lints PHP targets. It does not invoke Nginx or validate the full server configuration,
+PHP-FPM, authentication, CSRF or HTTP behavior. Validate the complete Nginx configuration
+and HTTP behavior through the application's environment before deployment.
 
 Writes use advisory locks, source hashes and ordinary-failure rollback. Other writers
 must respect the locks. A process crash or forced termination is not a multi-file
@@ -136,9 +117,7 @@ No licensing or publication decision is made by this prototype.
 
 ## Single-file alpha migration
 
-The former `config/http.conf` / `config/routes.conf` organization is no longer
-supported. Migrate manually using the website's
-[HTTP routing guide](../../docs/unphramed/http-routing.md#migrate-the-former-two-file-alpha-format).
-The CLI never rewrites legacy projects automatically. `check` supplies a disposable
-server fragment and named upstream substitutes; it does not inspect or validate
-the real deployment fragment, TLS, listeners or PHP-FPM connection.
+Former `config/http.conf` / `config/routes.conf`, maps-plus-server and per-route
+FastCGI include formats require
+manual migration to the server-included fragment documented on the website. The CLI
+rejects those formats and does not convert or modify deployment configuration.

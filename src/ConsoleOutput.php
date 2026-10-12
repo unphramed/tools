@@ -58,8 +58,6 @@ final class ConsoleOutput
         echo "\n", $heading('Advanced options (add only):', '1'), "\n";
         self::table(['  OPTION', 'DESCRIPTION'], [
             ['  --expected-plan-sha256 HASH', 'Apply a reviewed plan without prompting'],
-            ['  --fastcgi-pass VALUE', 'Named FastCGI upstream when it cannot be inferred'],
-            ['  --params-include VALUE', 'Parameter include when it cannot be inferred'],
             ['  --create-endpoint', 'Require a new 501 skeleton; refuse an existing file'],
         ], !$json);
         echo "\nGET is the default; selecting another method never adds GET or HEAD.\n";

@@ -59,67 +59,45 @@ final class RouteEditor
             }
             $bindings[$method] = $endpoint;
         }
-        $passes = array_unique(array_column(array_filter($inventory['locations'], static fn($location) => $location['kind'] === 'endpoint'), 'pass'));
-        $includes = array_unique(array_column(array_filter($inventory['locations'], static fn($location) => $location['kind'] === 'endpoint'), 'include'));
-        $pass = $options['--fastcgi-pass'] ?? $selected['pass'] ?? (count($passes) === 1 ? reset($passes) : null);
-        $include = $options['--params-include'] ?? $selected['include'] ?? (count($includes) === 1 ? reset($includes) : null);
-        if ($pass === null || $include === null) {
-            throw new RouteError('FastCGI settings are ambiguous: supply --fastcgi-pass and --params-include');
-        }
-        NginxRoutes::fastcgiPass($pass);
-        if (!in_array($include, ['fastcgi-params.conf', '../config/fastcgi-params.conf'], true)) {
-            throw new RouteError('Select the project-owned FastCGI parameter include');
-        }
-        $base = '$unphramed_' . substr(hash('sha256', $description['path']), 0, 12);
-        $suffix = 0;
-        while (isset($inventory['maps'][$base . '_handler'])) {
-            $base = '$unphramed_' . substr(hash('sha256', $description['path']), 0, 12) . '_' . ++$suffix;
-        }
-        $handler = $base . '_handler';
-        $mapText = "\nmap \$request_method $handler {\n    default \"\";\n";
-        foreach ($bindings as $method => $target) {
-            $mapText .= "    $method " . substr($target, 4) . ";\n";
-        }
-        $allowText = implode(', ', array_keys($bindings));
-        $mapText .= "}\n";
-        if ($selected !== null) {
-            // Reuse the original capture/environment contract when extending a route.
-            $description = $selected;
-        }
+        if ($selected !== null) $description = $selected;
         $pattern = $description['modifier'] === '~' ? '"' . $description['pattern'] . '"' : $description['pattern'];
-        $locationText = "location {$description['modifier']} $pattern {\n    add_header Allow \"$allowText\" always;\n    if ($handler = \"\") { return 405; }\n    try_files /$handler =404;\n    include \"$include\";\n    fastcgi_param SCRIPT_FILENAME \$document_root/$handler;\n    fastcgi_param SCRIPT_NAME /$handler;\n";
-        foreach ($description['parameters'] as $parameter) {
-            $locationText .= "    fastcgi_param {$parameter['serverKey']} \${$parameter['capture']};\n";
+        $allowText = implode(', ', array_keys($bindings));
+        $locationText = "location {$description['modifier']} $pattern {\n    add_header Allow \"$allowText\" always;\n";
+        if (count(array_unique($bindings)) === 1) {
+            $methodNames = array_keys($bindings);
+            $guard = count($methodNames) === 1 ? '!= ' . $methodNames[0] : '!~ "^(?:' . implode('|', $methodNames) . ')$"';
+            $locationText .= "    if (\$request_method $guard) { return 405; }\n";
+            $target = substr(reset($bindings), 3);
+        } else {
+            $target = '$unphramed_' . substr(hash('sha256', $description['path']), 0, 12) . '_endpoint';
+            $locationText .= "    set $target \"\";\n";
+            foreach ($bindings as $method => $file) {
+                $file = substr($file, 3);
+                $locationText .= "    if (\$request_method = $method) { set $target $file; }\n";
+            }
+            $locationText .= "    if ($target = \"\") { return 405; }\n";
         }
-        $locationText .= "    fastcgi_pass $pass;\n}";
+        $locationText .= "    rewrite ^ $target last;\n";
+        $locationText .= "}";
         $routeFile = self::path($root, 'config/nginx.conf');
         $source = file_get_contents($routeFile);
-        $server = $inventory['server'];
-        $indent = '    ';
-        $locationText = $indent . str_replace("\n", "\n" . $indent, $locationText);
         if ($selected === null) {
-            // Insert before the server's closing brace, never outside its context.
-            $offset = $server['end'] - 1;
-            $lineStart = strrpos(substr($source, 0, $offset), "\n");
-            if ($lineStart !== false && trim(substr($source, $lineStart + 1, $offset - $lineStart - 1)) === '') $offset = $lineStart + 1;
-            $candidate = substr($source, 0, $offset) . "\n$locationText\n" . substr($source, $offset);
+            $candidate = $source . (str_ends_with($source, "\n") ? "\n" : "\n\n") . "$locationText\n";
         } else {
             $node = $selected['node'];
             $old = substr($source, $node['start'], $node['end'] - $node['start']);
             $comments = (new NginxSyntax($old))->comments();
-            $locationText = implode("\n", $comments) . ($comments ? "\n" : '') . ltrim($locationText);
+            $locationText = implode("\n", $comments) . ($comments ? "\n" : '') . $locationText;
             $candidate = substr($source, 0, $node['start']) . $locationText . substr($source, $node['end']);
         }
-        $offset = $server['start'];
-        $candidate = substr($candidate, 0, $offset) . ltrim($mapText, "\n") . "\n" . substr($candidate, $offset);
         $changes = [
             ['file' => $routeFile, 'action' => 'update', 'beforeSha256' => hash('sha256', $source), 'text' => $candidate],
         ];
         if (isset($options['--create-endpoint'])) {
-            $changes[] = ['file' => $destination, 'action' => 'create', 'beforeSha256' => null, 'text' => "<?php\n\ndeclare(strict_types=1);\n\n// TODO: validate HTTP input, authorize the action and invoke your application.\n// Route captures are supplied in ROUTE_* FastCGI parameters; validate them here.\nheader('Content-Type: text/plain; charset=UTF-8');\nheader('Cache-Control: no-store');\nhttp_response_code(501);\necho 'Not implemented';\n"];
+            $changes[] = ['file' => $destination, 'action' => 'create', 'beforeSha256' => null, 'text' => "<?php\n\ndeclare(strict_types=1);\n\n// TODO: validate HTTP input, authorize the action and invoke your application.\n// Read and validate path input from \$_SERVER['REQUEST_URI']; query fields are separate.\nheader('Content-Type: text/plain; charset=UTF-8');\nheader('Cache-Control: no-store');\nhttp_response_code(501);\necho 'Not implemented';\n"];
         }
         $preconditions = [];
-        foreach (array_unique(array_merge(['config/nginx.conf', 'config/fastcgi-params.conf', 'bootstrap.php', $endpoint], array_column(array_filter($inventory['routes'], static fn($route) => $route['kind'] === 'endpoint'), 'endpoint'))) as $relative) {
+        foreach (array_unique(array_merge(['config/nginx.conf', 'bootstrap.php', $endpoint], array_column(array_filter($inventory['routes'], static fn($route) => $route['kind'] === 'endpoint'), 'endpoint'))) as $relative) {
             $file = self::path($root, $relative);
             $preconditions[] = ['file' => $file, 'sha256' => is_file($file) ? hash_file('sha256', $file) : null];
         }

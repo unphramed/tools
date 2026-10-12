@@ -26,7 +26,7 @@ final class RoutePath
                     throw new RouteError('Duplicate route parameter: ' . $name);
                 }
                 $type = $match[2] ?? 'int';
-                $parameters[$name] = ['name' => $name, 'type' => $type, 'capture' => 'route_' . $name, 'serverKey' => 'ROUTE_' . strtoupper($name)];
+                $parameters[$name] = ['name' => $name, 'type' => $type, 'capture' => 'route_' . $name, 'source' => 'requestPath'];
                 $patterns[] = '(?<route_' . $name . '>' . self::TYPES[$type] . ')';
             } elseif (preg_match('/\A[A-Za-z0-9_-]+\z/D', $part)) {
                 $patterns[] = $part;
