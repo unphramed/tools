@@ -8,9 +8,9 @@ final class Process
 {
     public static function run(array $command): string
     {
-        $process = \proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes);
+        $process = \proc_open($command, [0 => ["pipe", "r"], 1 => ["pipe", "w"], 2 => ["redirect", 1]], $pipes);
         if (!\is_resource($process)) {
-            throw new RouteError('Could not start validation command');
+            throw new RouteError("Could not start validation command");
         }
         \fclose($pipes[0]);
         $output = \stream_get_contents($pipes[1]);
