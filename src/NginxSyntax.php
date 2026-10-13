@@ -49,7 +49,7 @@ final class NginxSyntax
                 $i++;
             } else {
                 while ($i < $length && !ctype_space($source[$i]) && !str_contains('{};#', $source[$i])) {
-                    if ($source[$i] === '"' || $source[$i] === "'" || $source[$i] === '\\') {
+                    if ($source[$i] === '"' || $source[$i] === "'") {
                         throw new RouteError('Mixed quoting or escaping outside the supported profile', $line);
                     }
                     $value .= $source[$i++];

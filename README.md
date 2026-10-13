@@ -22,7 +22,7 @@ output, when `NO_COLOR` is set or `TERM=dumb`; JSON output remains unstyled.
 
 The installed `vendor/bin/unphramed-routes` targets the current directory or explicit
 `--project DIR`. PHP 8.5 with ctype/posix is required. The application supplies
-`config/nginx.conf` and its PHP targets. The routing fragment contains locations,
+`config/nginx.conf` and its PHP targets. The routing fragment contains server rewrites and optional locations,
 server-level direct-script guards and a fallback, included inside an environment-owned
 virtual host. The CLI parses this supported syntax and lints endpoints; it needs no
 Nginx, PHP-FPM, Python, distribution configuration files or server settings.
@@ -72,26 +72,40 @@ PHP nor existing method associations are overwritten.
 JSON v2 returns `routes`, `diagnostics`, `changes`, `preconditions`, `planSha256`,
 `ok`, `operation` and `message`. Endpoint records group methods selecting one file;
 redirect records have `kind: redirect`, `endpoint: null`, empty `methods` (unrestricted),
-and a status/target. `parameters` contains name, type, capture and `source: "requestPath"`. This replaces the former
-`serverKey` metadata: path values are extracted by the endpoint from `REQUEST_URI`,
-not supplied as custom FastCGI parameters. Refresh CLI and IDE together for this alpha profile.
+and a status/target. `parameters` contains name, type, capture and `source`. Rewrite captures use `source: "query"`
+with `queryKey`; optional location captures use `source: "requestPath"`. This replaces the former
+`serverKey` metadata: path values reach `$_GET` in the rewrite profile or are extracted by the endpoint
+from `REQUEST_URI` in the optional location profile. No custom FastCGI parameters are supplied. Refresh CLI and IDE together for this alpha profile.
 Changes use `update` or `create` with the complete proposed text and the previous
 SHA-256 (`null` for a new file). Preconditions list all checked inputs with their
 SHA-256 or required absence. This interface requires updating the IDE plugin together.
 
 ## Native profiles
 
-The supported profile uses location-local method guards, explicit literal endpoint
-selection and `rewrite ^ TARGET last` to the environment’s common PHP location.
-Each admitted method is explicit. Multiple methods can reuse one PHP file; different
-files on one public path use native `set` assignments with an empty default and 405 guard.
-Custom methods follow Nginx's parser limits. Typed routes support int/slug/string captures
-validated by the endpoint against the original request path. Unknown syntax blocks edits rather than guessing.
+The default inferred-endpoint profile emits an anchored server-level rewrite to
+`/$request_method/...php`. Present matching method files determine available methods;
+an absent method file receives 404. Adding a method file extends the same route without
+rewriting its native text. No HEAD file is created with GET. The inventory is derived
+from the route and files, not a runtime registry. Changes in discovered method files
+invalidate reviewed plans, including after interactive confirmation.
 
-Generated locations list their methods in a literal `Allow` header with `always`.
-The header is returned on 405; accepted requests continue to the common PHP location.
-Extending one location preserves captures, comments and all
-unrelated source text. No shared method map is changed and no PHP file is reorganized.
+Numeric and URL-safe slug captures are positional query bindings, placed after `$args`
+with a terminal `?`. The documented application bootstrap rejects requests whose
+rewritten query may exceed PHP's input-variable limit; the CLI supplies no HTTP runtime
+helper. Arbitrary strings are not safely interpolated into query strings and use the
+optional location/request-path profile instead. Unbounded `\d+` captures can be inventoried;
+PHP must validate integer representability. Generated integer patterns remain bounded.
+
+Explicit custom endpoints and arbitrary string captures use optional guarded locations,
+with chosen method associations, literal rewrite targets and 405/Allow. Several methods
+may share one file; different targets use native local `set` assignments. The CLI does
+not silently convert a method-directory rewrite into this profile; extend it with the
+same method-relative file or adapt the native source deliberately. A fixed-target manual
+rewrite admits all matching methods and is inventoried with method `*`.
+
+All profiles retain manual text and existing PHP. One direct-PHP guard precedes server
+rewrites, with no method-directory enumeration. PHP-FPM transport and virtual hosts belong
+to the environment. Unknown syntax blocks edits rather than guessing.
 
 `list` is useful even when Allow is wrong; `check` reports the mismatch and edits are
 blocked. Unsupported syntax yields located diagnostics, a nonzero exit and an explicitly

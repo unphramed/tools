@@ -60,25 +60,38 @@ final class RouteEditor
             $bindings[$method] = $endpoint;
         }
         if ($selected !== null) $description = $selected;
-        $pattern = $description['modifier'] === '~' ? '"' . $description['pattern'] . '"' : $description['pattern'];
-        $allowText = implode(', ', array_keys($bindings));
-        $locationText = "location {$description['modifier']} $pattern {\n    add_header Allow \"$allowText\" always;\n";
-        if (count(array_unique($bindings)) === 1) {
-            $methodNames = array_keys($bindings);
-            $guard = count($methodNames) === 1 ? '!= ' . $methodNames[0] : '!~ "^(?:' . implode('|', $methodNames) . ')$"';
-            $locationText .= "    if (\$request_method $guard) { return 405; }\n";
-            $target = substr(reset($bindings), 3);
-        } else {
-            $target = '$unphramed_' . substr(hash('sha256', $description['path']), 0, 12) . '_endpoint';
-            $locationText .= "    set $target \"\";\n";
-            foreach ($bindings as $method => $file) {
-                $file = substr($file, 3);
-                $locationText .= "    if (\$request_method = $method) { set $target $file; }\n";
-            }
-            $locationText .= "    if ($target = \"\") { return 405; }\n";
+        $rewriteProfile = ($selected['profile'] ?? '') === 'rewrite';
+        $suffixes = [];
+        foreach ($bindings as $method => $file) {
+            if (str_starts_with($file, 'web/' . $method . '/')) $suffixes[] = substr($file, strlen('web/' . $method . '/'));
+            else $suffixes[] = null;
         }
-        $locationText .= "    rewrite ^ $target last;\n";
-        $locationText .= "}";
+        $canRewrite = !in_array(null, $suffixes, true) && count(array_unique($suffixes)) === 1 && !in_array('string', array_column($description['parameters'], 'type'), true);
+        if ($rewriteProfile && !$canRewrite) throw new RouteError('Extending a method-directory rewrite requires the same method-relative endpoint; use the optional location profile for other associations');
+        if (($selected === null && $canRewrite && !isset($options['--endpoint'])) || $rewriteProfile) {
+            $endpointPattern = 'web/$request_method/' . $suffixes[0];
+            $locationText = $rewriteProfile ? substr(file_get_contents(self::path($root, 'config/nginx.conf')), $selected['node']['start'], $selected['node']['end'] - $selected['node']['start']) : RewriteRoutes::text($description, $endpointPattern);
+        } else {
+            $pattern = $description['modifier'] === '~' ? '"' . $description['pattern'] . '"' : $description['pattern'];
+            $allowText = implode(', ', array_keys($bindings));
+            $locationText = "location {$description['modifier']} $pattern {\n    add_header Allow \"$allowText\" always;\n";
+            if (count(array_unique($bindings)) === 1) {
+                $methodNames = array_keys($bindings);
+                $guard = count($methodNames) === 1 ? '!= ' . $methodNames[0] : '!~ "^(?:' . implode('|', $methodNames) . ')$"';
+                $locationText .= "    if (\$request_method $guard) { return 405; }\n";
+                $target = substr(reset($bindings), 3);
+            } else {
+                $target = '$unphramed_' . substr(hash('sha256', $description['path']), 0, 12) . '_endpoint';
+                $locationText .= "    set $target \"\";\n";
+                foreach ($bindings as $method => $file) {
+                    $file = substr($file, 3);
+                    $locationText .= "    if (\$request_method = $method) { set $target $file; }\n";
+                }
+                $locationText .= "    if ($target = \"\") { return 405; }\n";
+            }
+            $locationText .= "    rewrite ^ $target last;\n";
+            $locationText .= "}";
+        }
         $routeFile = self::path($root, 'config/nginx.conf');
         $source = file_get_contents($routeFile);
         if ($selected === null) {
@@ -86,24 +99,25 @@ final class RouteEditor
         } else {
             $node = $selected['node'];
             $old = substr($source, $node['start'], $node['end'] - $node['start']);
-            $comments = (new NginxSyntax($old))->comments();
+            $comments = $rewriteProfile ? [] : (new NginxSyntax($old))->comments();
             $locationText = implode("\n", $comments) . ($comments ? "\n" : '') . $locationText;
             $candidate = substr($source, 0, $node['start']) . $locationText . substr($source, $node['end']);
         }
-        $changes = [
+        $changes = $candidate === $source ? [] : [
             ['file' => $routeFile, 'action' => 'update', 'beforeSha256' => hash('sha256', $source), 'text' => $candidate],
         ];
         if (isset($options['--create-endpoint'])) {
-            $changes[] = ['file' => $destination, 'action' => 'create', 'beforeSha256' => null, 'text' => "<?php\n\ndeclare(strict_types=1);\n\n// TODO: validate HTTP input, authorize the action and invoke your application.\n// Read and validate path input from \$_SERVER['REQUEST_URI']; query fields are separate.\nheader('Content-Type: text/plain; charset=UTF-8');\nheader('Cache-Control: no-store');\nhttp_response_code(501);\necho 'Not implemented';\n"];
+            $changes[] = ['file' => $destination, 'action' => 'create', 'beforeSha256' => null, 'text' => "<?php\n\ndeclare(strict_types=1);\n\n// TODO: validate HTTP input, authorize the action and invoke your application.\n// Read route inputs from \$_GET for rewrites, or REQUEST_URI in the optional location profile.\nheader('Content-Type: text/plain; charset=UTF-8');\nhttp_response_code(501);\necho 'Not implemented';\n"];
         }
         $preconditions = [];
         foreach (array_unique(array_merge(['config/nginx.conf', 'bootstrap.php', $endpoint], array_column(array_filter($inventory['routes'], static fn($route) => $route['kind'] === 'endpoint'), 'endpoint'))) as $relative) {
             $file = self::path($root, $relative);
             $preconditions[] = ['file' => $file, 'sha256' => is_file($file) ? hash_file('sha256', $file) : null];
         }
-        $plan = ['changes' => $changes, 'preconditions' => $preconditions];
+        $dispatchInputs = array_values(array_map(static fn($location) => ['pattern' => $location['endpointPattern'], 'bindings' => $location['bindings']], array_filter(NginxRoutes::read($root, $candidate)['locations'], static fn($location) => ($location['profile'] ?? '') === 'rewrite' && $location['kind'] === 'endpoint' && str_contains($location['endpointPattern'], '$request_method'))));
+        $plan = ['changes' => $changes, 'preconditions' => $preconditions, 'dispatchInputs' => $dispatchInputs];
         $plan['planSha256'] = hash('sha256', json_encode($plan, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
-        $plan['inventory'] = NginxRoutes::read($root, $candidate);
+        $plan['inventory'] = NginxRoutes::read($root, $candidate, array_map(static fn($change) => substr($change['file'], strlen($root) + 1), array_filter($changes, static fn($change) => $change['action'] === 'create')));
         return $plan;
     }
 
@@ -161,6 +175,9 @@ final class RouteEditor
                 if ($actual !== $condition['sha256'] || ($actual === null && file_exists($condition['file']))) {
                     throw new RouteError('Preview is stale; preview again');
                 }
+            }
+            foreach ($plan['dispatchInputs'] as $input) {
+                if (RewriteRoutes::bindings($root, $input['pattern']) !== $input['bindings']) throw new RouteError('Preview is stale: available method endpoints changed; preview again');
             }
             foreach ($plan['changes'] as $change) {
                 $file = $change['file'];

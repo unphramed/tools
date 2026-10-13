@@ -164,7 +164,7 @@ final class RoutesCommand
                 return 1;
             }
             if ($command === 'list') {
-                $result['message'] = 'Inventory read directly from Nginx. Run check to verify endpoints and method/Allow consistency. Validate the full Nginx configuration through your environment.';
+                $result['message'] = 'Inventory derived from native Nginx routes and available method files. Run check to verify endpoints and optional method/Allow consistency. Validate the full Nginx configuration through your environment.';
             } else {
                 if ($inventory['checks']) {
                     $result['diagnostics'] = $inventory['checks'];
@@ -174,7 +174,7 @@ final class RoutesCommand
                 }
                 self::validateTargets($root, array_filter($inventory['routes'], static fn($route) => $route['kind'] === 'endpoint'));
                 if ($command === 'check') {
-                    $result['message'] = 'Supported route syntax, method/Allow consistency and PHP endpoint syntax passed. Nginx configuration, PHP-FPM and HTTP behavior must be checked in your environment.';
+                    $result['message'] = 'Supported route syntax, optional method/Allow consistency and PHP endpoint syntax passed. Nginx configuration, PHP-FPM and HTTP behavior must be checked in your environment.';
                 } else {
                     if (isset($options['--expected-routes-sha256']) && !hash_equals($options['--expected-routes-sha256'], hash_file('sha256', $sourceFile))) {
                         throw new RouteError('Preview is stale: routes changed; preview again');

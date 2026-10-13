@@ -7,7 +7,7 @@ namespace Unphramed\Tools;
 /** Interpretation of the documented native profiles, never a runtime registry. */
 final class NginxRoutes
 {
-    public static function read(string $root, ?string $source = null): array
+    public static function read(string $root, ?string $source = null, array $plannedEndpoints = []): array
     {
         $source ??= file_get_contents($root . '/config/nginx.conf');
         $file = $root . '/config/nginx.conf';
@@ -20,6 +20,9 @@ final class NginxRoutes
                     if ($kind = self::utility($node)) {
                         if (isset($utilities[$kind])) throw new RouteError('Duplicate utility location: ' . $kind);
                         $utilities[$kind] = true;
+                    } elseif ($node['args'][0] === 'rewrite') {
+                        if (!isset($utilities['php-protection'])) throw new RouteError('Place direct-script protection before server rewrites');
+                        $result['locations'][] = RewriteRoutes::read($root, $node, $plannedEndpoints);
                     } elseif ($node['args'][0] === 'location') {
                         $result['locations'][] = self::location($node, $result);
                     } else {
@@ -29,7 +32,7 @@ final class NginxRoutes
                     $result['diagnostics'][] = ['file' => $file, 'line' => $node['line'], 'message' => $error->getMessage()];
                 }
             }
-            foreach (['method-protection', 'php-protection', 'fallback'] as $kind) {
+            foreach (['php-protection', 'fallback'] as $kind) {
                 if (!isset($utilities[$kind])) throw new RouteError('Missing utility location: ' . $kind);
             }
         } catch (RouteError $error) {
