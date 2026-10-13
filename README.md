@@ -317,3 +317,15 @@ versions can continue to use the existing route interface.
 
 This package and its dependency are supplied privately for the prototype. No
 Packagist release of `unphramed/tools` is implied by these commands.
+
+## Migrate the former two-file alpha format
+
+The current CLI expects the server-included fragment. It diagnoses former `http.conf`/`routes.conf` and maps-plus-server layouts; it does not convert them automatically.
+
+1. Back up the existing configuration and retain assets and fallback locations. Place the single direct-PHP guard before server-level rewrites. No method-directory enumeration is needed.
+2. Use the server-level rewrites described under Native profiles: `$request_method` selects a method directory. Retain existing explicit guarded locations only when their 405/Allow or shared-target policy is intentional. Files present in the selected method directories determine which methods are enabled.
+3. Remove the enclosing `server` block and `*-server.conf` include from the application file. Have the environment include `config/nginx.conf` inside its virtual host instead.
+4. Remove per-route FastCGI directives and transport includes. Use `rewrite ... last` to reach the environment’s common PHP handler. Numeric/slug path captures may become final query arguments after `$args`, ending the replacement with `?`. Use the common query-limit check in the documented bootstrap. Arbitrary string captures remain in the optional location/request-path profile; do not interpolate decoded query delimiters.
+5. Remove application-owned FastCGI/FPM files only after the environment provides their required behavior. Validate the complete deployment and exercise methods, route/query collisions and private URLs.
+
+The CLI's `check` parses the supported route syntax, checks optional method/Allow consistency and lints existing PHP targets. It neither invokes Nginx nor generates a server configuration. Validate the complete Nginx configuration and test the full request path through your environment. Former per-route transport includes are also unsupported and require this manual migration.
