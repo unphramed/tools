@@ -11,7 +11,7 @@ final class DiSuggestions
 {
     public static function related(DiSources $sources, DiGenerator $generator, string $type, array $visiting = []): array
     {
-        if (in_array($type, $visiting, true)) return [];
+        if (\in_array($type, $visiting, true)) return [];
         $factories = $generator->existingFactories($type);
         if ($factories) return [$type => $factories];
         try {
@@ -35,7 +35,7 @@ final class DiSuggestions
                 // Keep looking: another parameter can provide a known DI link.
             }
         }
-        ksort($related);
+        \ksort($related);
         return $related;
     }
 }
