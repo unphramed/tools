@@ -106,8 +106,8 @@ from the route and files, not a runtime registry. Changes in discovered method f
 invalidate reviewed plans, including after interactive confirmation.
 
 Numeric and URL-safe slug captures are positional query bindings, placed after `$args`
-with a terminal `?`. The documented application bootstrap rejects requests whose
-rewritten query may exceed PHP's input-variable limit; the CLI supplies no HTTP runtime
+with a terminal `?`. Applications using this argument-preserving profile must reject possible query
+truncation before reading route inputs; the CLI supplies no HTTP runtime
 helper. Arbitrary strings are not safely interpolated into query strings and use the
 optional location/request-path profile instead. Unbounded `\d+` captures can be inventoried;
 PHP must validate integer representability. Generated integer patterns remain bounded.
@@ -325,7 +325,7 @@ The current CLI expects the server-included fragment. It diagnoses former `http.
 1. Back up the existing configuration and retain assets and fallback locations. Place the single direct-PHP guard before server-level rewrites. No method-directory enumeration is needed.
 2. Use the server-level rewrites described under Native profiles: `$request_method` selects a method directory. Retain existing explicit guarded locations only when their 405/Allow or shared-target policy is intentional. Files present in the selected method directories determine which methods are enabled.
 3. Remove the enclosing `server` block and `*-server.conf` include from the application file. Have the environment include `config/nginx.conf` inside its virtual host instead.
-4. Remove per-route FastCGI directives and transport includes. Use `rewrite ... last` to reach the environment’s common PHP handler. Numeric/slug path captures may become final query arguments after `$args`, ending the replacement with `?`. Use the common query-limit check in the documented bootstrap. Arbitrary string captures remain in the optional location/request-path profile; do not interpolate decoded query delimiters.
+4. Remove per-route FastCGI directives and transport includes. Use `rewrite ... last` to reach the environment’s common PHP handler. Numeric/slug path captures may become final query arguments after `$args`, ending the replacement with `?`. Reject possible PHP input-limit truncation in the application bootstrap when preserving `$args`. Arbitrary string captures remain in the optional location/request-path profile; do not interpolate decoded query delimiters.
 5. Remove application-owned FastCGI/FPM files only after the environment provides their required behavior. Validate the complete deployment and exercise methods, route/query collisions and private URLs.
 
 The CLI's `check` parses the supported route syntax, checks optional method/Allow consistency and lints existing PHP targets. It neither invokes Nginx nor generates a server configuration. Validate the complete Nginx configuration and test the full request path through your environment. Former per-route transport includes are also unsupported and require this manual migration.
