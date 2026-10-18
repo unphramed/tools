@@ -6,7 +6,7 @@
 </picture>
 
 Composer **development-only** tools for native Nginx routing and explicit PHP dependency factories.
-Apache support is not implemented. No release or remote package source is available.
+Apache route tooling is not implemented. No release or remote package source is available.
 The website repository is private and is not an installation source for application users.
 
 After obtaining the package through a separately supplied repository or private
