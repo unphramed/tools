@@ -108,8 +108,11 @@ final class ConsoleOutput
         echo "  vendor/bin/unphramed-routes add --path /users --dry-run\n\n";
         echo $heading("Options:", "1"), "\n";
         self::table(["  OPTION", "DESCRIPTION"], [
-            ["  --path PATH", "Public route template (required for add)"],
+            ["  --path PATH", "Route schema; prompted on terminal when absent"],
             ["  --method METHOD", "HTTP method (default: GET); repeat for multiple methods"],
+            ["  --constraint NAME=REGEX", "Parameter constraint; repeat for multiple parameters"],
+            ["  --choices NAME=a,b", "Finite parameter choices; repeat as needed"],
+            ["  --unused NAME", "Unused by every method; repeat as needed"],
             ["  --endpoint FILE", "Override the inferred PHP endpoint under web/"],
             ["  --dry-run", "Preview without writing (add only)"],
             ["  --project DIR", "Target another project"],
@@ -121,7 +124,7 @@ final class ConsoleOutput
             ["  --expected-plan-sha256 HASH", "Apply a reviewed plan without prompting"],
             ["  --create-endpoint", "Require a new 501 skeleton; refuse an existing file"],
         ], !$json);
-        echo "\nGET is the default; selecting another method never adds GET or HEAD.\n";
+        echo "\nGET is the default; inferred HEAD selects its GET file without creating a HEAD file.\n";
         echo "Endpoints are inferred; absent files become 501 skeletons, existing PHP is preserved.\n";
         echo "add shows a diff and asks for confirmation; --dry-run only previews.\n";
         echo "Scripts/JSON: preview with --dry-run --json, then apply with --expected-plan-sha256 HASH.\n";

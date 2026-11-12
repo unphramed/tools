@@ -22,9 +22,10 @@ final class NginxRoutes
                         $utilities[$kind] = true;
                     } elseif ($node["args"][0] === "rewrite") {
                         if (!isset($utilities["php-protection"])) throw new RouteError("Place direct-script protection before server rewrites");
-                        $result["locations"][] = RewriteRoutes::read($root, $node, $plannedEndpoints);
+                        if (\str_contains($node["args"][2], '$handler_method') && (!isset($utilities["handler-method"]) || !isset($utilities["handler-head"]))) throw new RouteError("Missing HEAD selection helpers before rewrite");
+                        $result["locations"][] = RewriteRoutes::read($root, RewriteRoutes::schema($source, $node), $plannedEndpoints);
                     } elseif ($node["args"][0] === "location") {
-                        $result["locations"][] = self::location($node, $result);
+                        $result["locations"][] = self::location(RewriteRoutes::schema($source, $node), $result);
                     } else {
                         throw new RouteError("Expected application locations included inside the environment server block. Migrate former maps/server or http.conf/routes.conf layouts manually; deployment settings and FastCGI transport belong to the environment.");
                     }
@@ -40,9 +41,17 @@ final class NginxRoutes
         }
         foreach ($result["checks"] as &$check) $check["file"] = $file;
         unset($check);
-        foreach ($result["locations"] as $location) {
+        $result["utilities"] = \array_keys($utilities ?? []);
+        $result["routes"] = self::records($file, $result["locations"]);
+        return $result;
+    }
+
+    public static function records(string $file, array $locations): array
+    {
+        $routes = [];
+        foreach ($locations as $location) {
             if ($location["kind"] === "redirect") {
-                $result["routes"][] = ["file" => $root . "/config/nginx.conf", "line" => $location["node"]["line"], "offset" => $location["node"]["start"], "kind" => "redirect", "path" => $location["path"], "methods" => [], "endpoint" => null, "parameters" => [], "parameter" => null, "redirect" => $location["redirect"]];
+                $routes[] = ["file" => $file, "line" => $location["node"]["line"], "offset" => $location["node"]["start"], "kind" => "redirect", "path" => $location["path"], "methods" => [], "endpoint" => null, "parameters" => [], "parameter" => null, "redirect" => $location["redirect"]];
                 continue;
             }
             $groups = [];
@@ -50,15 +59,17 @@ final class NginxRoutes
                 $groups[$endpoint][] = $method;
             }
             foreach ($groups as $endpoint => $methods) {
-                $result["routes"][] = ["file" => $root . "/config/nginx.conf", "line" => $location["node"]["line"], "offset" => $location["node"]["start"], "kind" => "endpoint", "path" => $location["path"], "methods" => $methods, "endpoint" => $endpoint, "parameters" => $location["parameters"], "parameter" => $location["parameters"][0]["name"] ?? null];
+                $routes[] = ["file" => $file, "line" => $location["node"]["line"], "offset" => $location["node"]["start"], "kind" => "endpoint", "path" => $location["path"], "methods" => $methods, "endpoint" => $endpoint, "schema" => $location["schema"] ?? null, "parameters" => $location["parameters"], "parameter" => $location["parameters"][0]["name"] ?? null];
             }
         }
-        return $result;
+        return $routes;
     }
 
     /** Only these exact utility shapes are excluded from the endpoint inventory. */
     private static function utility(array $node): ?string
     {
+        if ($node["args"] === ["set", '$handler_method', '$request_method'] && $node["children"] === null) return "handler-method";
+        if ($node["args"] === ["if", '($request_method', "=", "HEAD)"] && NginxSyntax::shape($node["children"] ?? []) === [[["set", '$handler_method', "GET"], null]]) return "handler-head";
         $return404 = [["return", "404"], null];
         $children = $node["children"] === null ? null : NginxSyntax::shape($node["children"]);
         if ($children === [$return404]) {
@@ -72,7 +83,8 @@ final class NginxRoutes
 
     private static function location(array $node, array &$result): array
     {
-        $description = RoutePath::fromLocation($node["args"]);
+        $description = isset($node["schema"]) ? RoutePath::describe($node["schema"]["path"], $node["schema"]["options"] ?? []) : RoutePath::fromLocation($node["args"]);
+        if (isset($node["schema"]) && $node["args"] !== ["location", $description["modifier"], $description["pattern"]]) throw new RouteError("Route schema comment disagrees with its native location");
         if ($node["children"] === null) throw new RouteError("Location needs a block");
         if (\count($node["children"]) === 1 && $node["children"][0]["args"][0] === "return") {
             $return = $node["children"][0]["args"];

@@ -5,8 +5,8 @@
   <img src="logo.svg" alt="Unphramed" width="280">
 </picture>
 
-Composer **development-only** tools for native Nginx routing and explicit PHP dependency factories.
-Apache route tooling is not implemented. No release or remote package source is available.
+Composer **development-only** tools for native Nginx and Apache routing and explicit PHP dependency factories.
+No release or remote package source is available.
 The website repository is private and is not an installation source for application users.
 
 After obtaining the package through a separately supplied repository or private
@@ -38,10 +38,10 @@ JSON protocol versions (routes v2 and DI v1) are independent of the package vers
 
 The installed `vendor/bin/unphramed-routes` targets the current directory or explicit
 `--project DIR`. PHP 8.5 with ctype/posix is required. The application supplies
-`config/nginx.conf` and its PHP targets. The routing fragment contains server rewrites and optional locations,
+`config/nginx.conf`, `config/apache.conf`, or both, and its PHP targets. The routing fragment contains server rewrites and optional locations,
 server-level direct-script guards and a fallback, included inside an environment-owned
 virtual host. The CLI parses this supported syntax and lints endpoints; it needs no
-Nginx, PHP-FPM, Python, distribution configuration files or server settings.
+Nginx, Apache, PHP-FPM, Python, distribution configuration files or server settings.
 It never generates a server configuration, starts a service or executes the application.
 
 ```sh
@@ -66,15 +66,38 @@ vendor/bin/unphramed-routes add --path /users --method POST
 vendor/bin/unphramed-routes add --path /users --endpoint web/custom/users.php
 ```
 
-Endpoint inference is a tooling convention, not a runtime dispatcher. Append
-`index.php` beneath `web/METHOD/` and one directory per route segment: `/` becomes
-`web/GET/index.php`, `/users` becomes `web/GET/users/index.php`, and
-`/users/{id:int}` becomes `web/GET/users/_id_int/index.php`. Untyped `{id}` means
-`{id:int}`. Parameter directories use `_name_type`; literals beginning with `_`
-receive one additional `_` to keep them distinct. No singularization or model
-naming is guessed. Several methods in one addition require an explicit endpoint
-because sharing a handler is a deliberate choice. Native Nginx remains authoritative:
-inference neither rewrites existing routes nor requires every application to adopt it.
+Endpoint filenames follow the recognized route schema: `/` selects `web/GET/index.php`,
+`/users` selects `web/GET/users.php`, and `/users/{id:int}` selects `web/GET/users/[id].php`.
+Preserve literal spelling, punctuation and extensions. Parameters use lowerCamelCase names;
+types do not appear in filenames. `{id}` defaults to `int`. HEAD selects the GET file,
+without changing the method received by PHP. No HEAD file is created. Reserve `index.php`
+for `/`; `/index` needs an explicit alias. Trailing slashes do not add filename segments.
+
+Optional whole segments use `{page?}` or `{page:int?}` and remain in the filename even
+when absent. Compound segments such as `/images/{id}.jpg` select `images/[id].jpg.php`.
+Repeat `--constraint NAME=REGEX` to override a parameter's type pattern, `--choices NAME=a,b`
+for finite choices, and `--unused NAME` for values unused by every method. An unused
+whole-segment finite choice becomes `_`; ordinary unused parameters retain `[name]`.
+Constraints cannot contain capturing groups or server directives. Query bindings accept
+only patterns whose alphabet is demonstrably URL-safe; other expressions are refused.
+The optional Nginx location profile still supports the built-in arbitrary-string type.
+Absent optional query captures are empty strings; controllers choose defaults.
+
+```sh
+vendor/bin/unphramed-routes add --path '/archive/{page:int?}'
+vendor/bin/unphramed-routes add --path '/images/{photoId}.jpg'
+vendor/bin/unphramed-routes add --path '/likes/{kind}/{id}' --choices kind=book,film --unused kind
+vendor/bin/unphramed-routes add --path '/lookup/{key:string}' --constraint 'key=[a-z0-9]{3}'
+vendor/bin/unphramed-routes add --endpoint 'web/GET/articles/[id].php'
+```
+
+Bare `add`, or `add --endpoint FILE` without a path, asks for the schema and method
+on a terminal. A filename only suggests fields: confirm constraints and optionality.
+There are no PHP annotations or automatic filesystem route registration. Without a
+terminal, supply the complete schema with `--path`. Existing PHP remains intact.
+Several methods in one addition require an explicit shared endpoint. Existing routes
+are never renamed or silently migrated. Generated rewrites carry an adjacent
+`# route-schema` comment; its schema must agree with the native rule to permit editing.
 
 For scripts and IDE clients, preview with `--dry-run --json`, then run the same
 addition with `--expected-plan-sha256 HASH` (without `--dry-run`). It applies the
@@ -85,6 +108,8 @@ The `--create-endpoint` option remains a strict request for a new file and refus
 an existing destination; it is unnecessary for ordinary additions. Neither existing
 PHP nor existing method associations are overwritten.
 
+JSON v2 also reports `routingSources` and the selected `endpoint` for additions.
+Route records may include `schema`; parameters may include `optional`, `unused` and `expression`.
 JSON v2 returns `routes`, `diagnostics`, `changes`, `preconditions`, `planSha256`,
 `ok`, `operation` and `message`. Endpoint records group methods selecting one file;
 redirect records have `kind: redirect`, `endpoint: null`, empty `methods` (unrestricted),
@@ -99,25 +124,37 @@ SHA-256 or required absence. This interface requires updating the IDE plugin tog
 ## Native profiles
 
 The default inferred-endpoint profile emits an anchored server-level rewrite to
-`/$request_method/...php`. Present matching method files determine available methods;
+`/$handler_method/...php` (Apache: `/%{ENV:handler_method}/...php`). Present matching method files determine available methods;
 an absent method file receives 404. Adding a method file extends the same route without
 rewriting its native text. No HEAD file is created with GET. The inventory is derived
 from the route and files, not a runtime registry. Changes in discovered method files
 invalidate reviewed plans, including after interactive confirmation.
 
-Numeric and URL-safe slug captures are positional query bindings, placed after `$args`
-with a terminal `?`. Applications using this argument-preserving profile must reject possible query
-truncation before reading route inputs; the CLI supplies no HTTP runtime
+New numeric and URL-safe captures replace incoming query arguments (terminal `?` on
+Nginx, no `QSA` on Apache). Existing `$args`-preserving rules keep their behavior and
+require input-limit rejection before reading route inputs; the CLI supplies no HTTP runtime
 helper. Arbitrary strings are not safely interpolated into query strings and use the
 optional location/request-path profile instead. Unbounded `\d+` captures can be inventoried;
 PHP must validate integer representability. Generated integer patterns remain bounded.
 
-Explicit custom endpoints and arbitrary string captures use optional guarded locations,
+On Nginx, explicit custom endpoints and arbitrary string captures use optional guarded locations,
 with chosen method associations, literal rewrite targets and 405/Allow. Several methods
 may share one file; different targets use native local `set` assignments. The CLI does
 not silently convert a method-directory rewrite into this profile; extend it with the
 same method-relative file or adapt the native source deliberately. A fixed-target manual
 rewrite admits all matching methods and is inventoried with method `*`.
+
+Apache uses virtual-host `mod_rewrite`, never `.htaccess`. Its common profile has
+`RewriteEngine On`, a direct-script guard, endpoint rewrites without stop flags, then
+a shared file check, `[PT]` dispatch and 404 fallback. Fixed targets can use an explicit
+method condition. Existing direct `[PT]` rules are also read without converting them.
+Other conditions and unknown directives block editing.
+
+If both routing files exist, every addition previews and updates both. Their common
+method-directory/404 contracts must already agree on patterns, bindings, targets,
+query policy and redirects. Divergence, ambiguous overlaps or server-specific profiles
+block synchronization; resolve them manually first. Preview hashes cover both files,
+including the absence of a second source, and all discovered method associations.
 
 All profiles retain manual text and existing PHP. One direct-PHP guard precedes server
 rewrites, with no method-directory enumeration. PHP-FPM transport and virtual hosts belong

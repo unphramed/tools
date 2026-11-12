@@ -49,7 +49,7 @@ final class RoutesCommand
                 if (!\is_file($file)) {
                     throw new RouteError("Missing endpoint: " . $route["endpoint"]);
                 }
-                Process::run([PHP_BINARY, "-n", "-l", $file]);
+                Process::run([PHP_BINARY, "-n", "-d", "short_open_tag=0", "-l", $file]);
             } catch (RouteError $error) {
                 throw new RouteError($error->getMessage(), $route["line"]);
             }
@@ -89,7 +89,7 @@ final class RoutesCommand
     {
         $json = \in_array("--json", $argv, true);
         $sourceFile = "config/nginx.conf";
-        $result = ["version" => 2, "operation" => $argv[1] ?? "", "ok" => false, "routes" => [], "diagnostics" => [], "changes" => [], "preconditions" => [], "planSha256" => null, "message" => ""];
+        $result = ["version" => 2, "operation" => $argv[1] ?? "", "ok" => false, "routes" => [], "routingSources" => [], "diagnostics" => [], "changes" => [], "preconditions" => [], "planSha256" => null, "endpoint" => null, "message" => ""];
         $temporary = [];
         $previewShown = false;
         try {
@@ -104,14 +104,14 @@ final class RoutesCommand
             $options = [];
             for ($i = 2; $i < \count($argv); $i++) {
                 $key = $argv[$i];
-                if (isset($options[$key]) && $key !== "--method") {
+                if (isset($options[$key]) && !\in_array($key, ["--method", "--constraint", "--choices", "--unused"], true)) {
                     throw new RouteError("Duplicate option: " . $key);
                 }
                 if (\in_array($key, ["--dry-run", "--json", "--create-endpoint"], true)) {
                     $options[$key] = true;
-                } elseif (\in_array($key, ["--project", "--path", "--endpoint", "--method", "--expected-plan-sha256", "--expected-routes-sha256"], true) && isset($argv[$i + 1]) && !\str_starts_with($argv[$i + 1], "--")) {
+                } elseif (\in_array($key, ["--project", "--path", "--endpoint", "--method", "--constraint", "--choices", "--unused", "--expected-plan-sha256", "--expected-routes-sha256"], true) && isset($argv[$i + 1]) && !\str_starts_with($argv[$i + 1], "--")) {
                     $value = $argv[++$i];
-                    if ($key === "--method") {
+                    if (\in_array($key, ["--method", "--constraint", "--choices", "--unused"], true)) {
                         $options[$key][] = $value;
                     } else {
                         $options[$key] = $value;
@@ -141,14 +141,37 @@ final class RoutesCommand
             if ($root === false || !\is_dir($root)) {
                 throw new RouteError("Project directory does not exist");
             }
-            $sourceFile = self::projectPath($root, "config/nginx.conf");
-            foreach (["config/nginx.conf"] as $relative) {
-                $file = self::projectPath($root, $relative);
-                if (!\is_file($file) || !\is_readable($file)) {
-                    throw new RouteError("Missing readable " . $relative . ". The alpha routing format changed: migrate former maps/server or http.conf/routes.conf layouts into locations included inside the environment server block in config/nginx.conf; see the HTTP routing migration guide.", 1, $file);
+            if ($adding && !isset($options["--path"])) {
+                if ($json || !\stream_isatty(STDIN) || !\stream_isatty(STDOUT)) throw new RouteError("Supply --path with the complete route schema; filenames cannot determine constraints or optionality");
+                $suggestion = "";
+                if (isset($options["--endpoint"])) {
+                    RoutePath::endpoint($options["--endpoint"]);
+                    if (\preg_match('~\Aweb/([A-Z_-]+)/(.*)\.php\z~D', $options["--endpoint"], $match)) {
+                        $options["--method"] ??= [$match[1]];
+                        $suggestion = $match[2] === "index" ? "/" : "/" . \preg_replace('/\[([a-z][A-Za-z0-9_]*)\]/', '{$1}', $match[2]);
+                    }
+                }
+                echo "Route schema", $suggestion ? " [" . $suggestion . "]" : "", ": ";
+                $answer = \fgets(STDIN);
+                if ($answer === false) throw new RouteError("Cancelled: no route schema supplied");
+                $options["--path"] = \trim($answer) ?: $suggestion;
+                echo "Method [", $options["--method"][0] ?? "GET", "]: ";
+                $answer = \fgets(STDIN);
+                if ($answer === false) throw new RouteError("Cancelled: no method supplied");
+                if (\trim($answer) !== "") $options["--method"] = [\trim($answer)];
+                if (\str_contains($options["--path"], "{")) {
+                    foreach (["--constraint" => "Constraints (NAME=REGEX)", "--choices" => "Choices (NAME=a,b)", "--unused" => "Unused by every method (names)"] as $key => $label) {
+                        if (isset($options[$key])) continue;
+                        echo $label, " [none; space-separated]: ";
+                        $answer = \fgets(STDIN);
+                        if ($answer === false) throw new RouteError("Cancelled: incomplete route schema");
+                        if (\trim($answer) !== "") $options[$key] = \preg_split('/\s+/', \trim($answer));
+                    }
                 }
             }
-            $inventory = NginxRoutes::read($root);
+            $inventory = RoutingSources::read($root);
+            $result["routingSources"] = $inventory["routingSources"];
+            $sourceFile = $inventory["routingSources"][0]["file"];
             $result["routes"] = $inventory["routes"];
             $result["diagnostics"] = $inventory["diagnostics"];
             if ($inventory["diagnostics"]) {
@@ -157,17 +180,23 @@ final class RoutesCommand
                 return 1;
             }
             if ($command === "list") {
-                $result["message"] = "Inventory derived from native Nginx routes and available method files. Run check to verify endpoints and optional method/Allow consistency. Validate the full Nginx configuration through your environment.";
+                if (\count($inventory["routingSources"]) === 2 && $inventory["checks"]) {
+                    $result["diagnostics"] = $inventory["checks"];
+                    $result["message"] = "Inventories differ; synchronized edits are blocked.";
+                    self::outputResult($result, $json);
+                    return 1;
+                }
+                $result["message"] = "Inventory derived from native routes and available method files. Run check to verify endpoints and cross-server consistency. Validate the full server configuration through your environment.";
             } else {
                 if ($inventory["checks"]) {
                     $result["diagnostics"] = $inventory["checks"];
-                    $result["message"] = "Method/Allow contract failed; no edits are permitted.";
+                    $result["message"] = "Routing contract failed; no edits are permitted.";
                     self::outputResult($result, $json);
                     return 1;
                 }
                 self::validateTargets($root, \array_filter($inventory["routes"], static fn($route) => $route["kind"] === "endpoint"));
                 if ($command === "check") {
-                    $result["message"] = "Supported route syntax, optional method/Allow consistency and PHP endpoint syntax passed. Nginx configuration, PHP-FPM and HTTP behavior must be checked in your environment.";
+                    $result["message"] = "Supported route syntax, routing consistency and PHP endpoint syntax passed. Full server configuration, PHP integration and HTTP behavior must be checked in your environment.";
                 } else {
                     if (isset($options["--expected-routes-sha256"]) && !\hash_equals($options["--expected-routes-sha256"], \hash_file("sha256", $sourceFile))) {
                         throw new RouteError("Preview is stale: routes changed; preview again");
@@ -184,15 +213,17 @@ final class RoutesCommand
                             $code = \tempnam(\dirname($sourceFile), ".endpoint-check-");
                             $temporary[] = $code;
                             \file_put_contents($code, $change["text"]);
-                            Process::run([PHP_BINARY, "-n", "-l", $code]);
+                            Process::run([PHP_BINARY, "-n", "-d", "short_open_tag=0", "-l", $code]);
                         }
                     }
                     foreach ($temporary as $file) {
                         if (\is_file($file)) \unlink($file);
                     }
+                    $result["routes"] = $plan["inventory"]["routes"];
                     $result["changes"] = $plan["changes"];
                     $result["preconditions"] = $plan["preconditions"];
                     $result["planSha256"] = $plan["planSha256"];
+                    $result["endpoint"] = $plan["endpoint"];
                     $result["message"] = "Dry run only. Run add without --dry-run to review and confirm these changes. Created endpoints return 501; existing PHP is preserved.";
                     if (!isset($options["--dry-run"])) {
                         $confirmed = true;
@@ -214,6 +245,7 @@ final class RoutesCommand
             $result["changes"] = [];
             $result["preconditions"] = [];
             $result["planSha256"] = null;
+            $result["endpoint"] = null;
             $result["diagnostics"][] = ["file" => $error instanceof RouteError ? ($error->sourceFile ?? $sourceFile) : $sourceFile, "line" => $error instanceof RouteError ? $error->sourceLine : 1, "message" => $error->getMessage()];
         } finally {
             foreach ($temporary as $file) {

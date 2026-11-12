@@ -21,21 +21,34 @@ final class RewriteRoutes
         $parts = \explode("?", $target, 2);
         $script = $parts[0];
         $arguments = [];
+        $queryMode = "preserve";
         if (isset($parts[1])) {
-            if (!\str_starts_with($parts[1], '$args&') || !\str_ends_with($parts[1], "?")) throw new RouteError('Place original $args first and terminate the replacement with ?');
-            foreach (\explode("&", \substr($parts[1], 6, -1)) as $pair) {
-                if (!\preg_match('/\A([a-z][a-z0-9_]*)=\$([1-9])\z/D', $pair, $match) || isset($arguments[(int) $match[2]]) || \in_array($match[1], $arguments, true)) {
+            if (!\str_ends_with($parts[1], "?")) throw new RouteError("Terminate the query replacement with ?");
+            $preserve = \str_starts_with($parts[1], '$args&');
+            $queryMode = $preserve ? "append-captures" : "replace";
+            foreach (\explode("&", \substr($parts[1], $preserve ? 6 : 0, -1)) as $pair) {
+                if (!\preg_match('/\A([a-z][A-Za-z0-9_]*)=\$([1-9])\z/D', $pair, $match) || isset($arguments[(int) $match[2]]) || \in_array($match[1], $arguments, true)) {
                     throw new RouteError("Use unique query names bound to positional captures");
                 }
                 $arguments[(int) $match[2]] = $match[1];
             }
         }
-        $description = self::description($pattern, $arguments);
-        $dynamic = \str_starts_with($script, '/$request_method/');
+        $description = isset($node["schema"]) ? RoutePath::describe($node["schema"]["path"], $node["schema"]["options"] ?? []) : self::description($pattern, $arguments);
+        if (isset($node["schema"])) {
+            $expected = (new NginxSyntax(self::text($description, "web" . $script, $queryMode === "replace")))->parse()[0]["args"];
+            if ($expected !== $args) throw new RouteError("Route schema comment disagrees with its native rewrite");
+            foreach ($description["parameters"] as $index => &$parameter) {
+                $parameter["source"] = "query";
+                $parameter["queryKey"] = $parameter["name"];
+                $parameter["capture"] = '$' . ($index + 1);
+            }
+            unset($parameter);
+        }
+        $dynamic = \str_starts_with($script, '/$request_method/') || \str_starts_with($script, '/$handler_method/');
         $endpointPattern = "web" . $script;
-        RoutePath::endpoint(\str_replace('$request_method', "GET", $endpointPattern));
+        RoutePath::endpoint(\str_replace(['$request_method', '$handler_method'], "GET", $endpointPattern));
         $bindings = $dynamic ? self::bindings($root, $endpointPattern, $plannedEndpoints) : ["*" => $endpointPattern];
-        return $description + ["node" => $node, "kind" => "endpoint", "profile" => "rewrite", "endpointPattern" => $endpointPattern, "bindings" => $bindings];
+        return $description + ["node" => $node, "kind" => "endpoint", "profile" => "rewrite", "endpointPattern" => $endpointPattern, "bindings" => $bindings, "queryMode" => $queryMode];
     }
 
     public static function bindings(string $root, string $pattern, array $plannedEndpoints = []): array
@@ -49,10 +62,13 @@ final class RewriteRoutes
         \sort($methods);
         foreach ($methods as $method) {
             if (!\preg_match("/\\A[A-Z_-]+\\z/D", $method) || \in_array($method, ["TRACE", "CONNECT"], true)) continue;
-            $endpoint = \str_replace('$request_method', $method, $pattern);
+            $normalized = \str_contains($pattern, '$handler_method');
+            if ($normalized && $method === "HEAD") continue;
+            $endpoint = \str_replace(['$request_method', '$handler_method'], $method, $pattern);
             $file = RouteEditor::path($root, $endpoint);
             if (\is_file($file) || \in_array($endpoint, $plannedEndpoints, true)) $bindings[$method] = $endpoint;
         }
+        if (\str_contains($pattern, '$handler_method') && isset($bindings["GET"])) $bindings["HEAD"] = $bindings["GET"];
         return $bindings;
     }
 
@@ -83,24 +99,61 @@ final class RewriteRoutes
             if (!$matched) throw new RouteError("Use numeric/slug rewrite captures; arbitrary strings need the optional location/request-path profile");
         }
         if (\count($parameters) !== \count($arguments)) throw new RouteError("Every query binding must reference one route capture");
-        $description = RoutePath::describe($path);
+        $description = RoutePath::describe(\str_replace(["\\.", "\\-", "\\~"], [".", "-", "~"], $path));
         $description["parameters"] = $parameters;
         $description["pattern"] = $pattern;
+        unset($description["schema"]);
         return $description;
     }
 
-    public static function text(array $description, string $endpointPattern): string
+    public static function schema(string $source, array $node): array
     {
+        $before = \substr($source, 0, $node["start"]);
+        if (\preg_match('/# route-schema (\{[^\n]+\})\s*$/', $before, $match)) {
+            $node["schema"] = \json_decode($match[1], true, flags: JSON_THROW_ON_ERROR);
+        }
+        return $node;
+    }
+
+    public static function comment(array $description): string
+    {
+        if (!isset($description["schema"])) return "";
+        return "# route-schema " . \json_encode($description["schema"], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+    }
+
+    public static function querySafe(array $parameter): bool
+    {
+        $expression = $parameter["expression"] ?? RoutePath::TYPES[$parameter["type"]];
+        if (($parameter["unused"] ?? false) && $expression === RoutePath::TYPES["string"]) return true;
+        // A deliberately small alphabet: every accepted capture is safe in a raw query value.
+        $safe = true;
+        $remaining = \preg_replace_callback('/\[(?:[A-Za-z0-9_-]|\\\\d)+\]/', static function ($match) use (&$safe) {
+            for ($byte = 0; $byte < 256; $byte++) {
+                $character = \chr($byte);
+                if (\preg_match("~" . $match[0] . "~D", $character) && !\preg_match('/\A[A-Za-z0-9._~-]\z/D', $character)) $safe = false;
+            }
+            return "a";
+        }, $expression);
+        if (!$safe) return false;
+        $remaining = \str_replace(["\\d", "\\w", "\\.", "(?:"], ["a", "a", "a", "("], $remaining);
+        return (bool) \preg_match('/\A[A-Za-z0-9_()|?*+{},-]+\z/D', $remaining);
+    }
+
+    public static function text(array $description, string $endpointPattern, bool $replaceQuery = false): string
+    {
+        if (\count($description["parameters"]) > 9) throw new RouteError("This rewrite profile supports at most nine captures");
         $pattern = $description["pattern"];
-        if (!\str_starts_with($pattern, "^")) $pattern = "^" . $pattern . '$';
+        if (!\str_starts_with($pattern, "^")) $pattern = "^" . \preg_quote($pattern, "~") . '$';
         foreach ($description["parameters"] as $parameter) {
             $pattern = \str_replace("(?<" . $parameter["capture"] . ">", "(", $pattern);
-            if ($parameter["type"] === "string") throw new RouteError("Arbitrary string captures need the optional location/request-path profile");
+            if (!self::querySafe($parameter)) throw new RouteError("Arbitrary string captures need the optional location/request-path profile");
         }
         $target = \substr($endpointPattern, 3);
         if ($description["parameters"]) {
-            $target .= '?$args';
-            foreach ($description["parameters"] as $index => $parameter) $target .= "&" . $parameter["name"] . '=$' . ($index + 1);
+            $pairs = [];
+            foreach ($description["parameters"] as $index => $parameter) if (!($parameter["unused"] ?? false)) $pairs[] = $parameter["name"] . '=$' . ($index + 1);
+            if (!$pairs) return 'rewrite "' . $pattern . '" ' . $target . " last;";
+            $target .= ($replaceQuery ? "?" : '?$args&') . \implode("&", $pairs);
             $target .= "?";
         }
         return 'rewrite "' . $pattern . '" ' . $target . " last;";
