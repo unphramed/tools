@@ -81,7 +81,7 @@ final class NginxRoutes
         return null;
     }
 
-    private static function location(array $node, array &$result): array
+    public static function location(array $node, array &$result): array
     {
         $description = isset($node["schema"]) ? RoutePath::describe($node["schema"]["path"], $node["schema"]["options"] ?? []) : RoutePath::fromLocation($node["args"]);
         if (isset($node["schema"]) && $node["args"] !== ["location", $description["modifier"], $description["pattern"]]) throw new RouteError("Route schema comment disagrees with its native location");

@@ -7,20 +7,20 @@ namespace Unphramed\Tools;
 /** Detect application-owned sources and compare the portable routing contract. */
 final class RoutingSources
 {
-    public static function read(string $root, array $candidates = [], array $plannedEndpoints = []): array
+    public static function read(string $root, array $candidates = [], array $plannedEndpoints = [], bool $readOnly = false): array
     {
         $result = ["routes" => [], "diagnostics" => [], "checks" => [], "routingSources" => [], "inventories" => []];
         foreach (["nginx", "apache"] as $server) {
             $file = RouteEditor::path($root, "config/" . $server . ".conf");
             if (!\file_exists($file)) continue;
             if (!\is_file($file) || !\is_readable($file)) throw new RouteError("Routing source must be a readable file", 1, $file);
-            $inventory = $server === "nginx" ? NginxRoutes::read($root, $candidates[$server] ?? null, $plannedEndpoints) : ApacheRoutes::read($root, $candidates[$server] ?? null, $plannedEndpoints);
+            $inventory = $server === "nginx" && $readOnly ? NativeRouteInventory::read($root, \file_get_contents($file)) : ($server === "nginx" ? NginxRoutes::read($root, $candidates[$server] ?? null, $plannedEndpoints) : ApacheRoutes::read($root, $candidates[$server] ?? null, $plannedEndpoints));
             $result["routingSources"][] = ["server" => $server, "file" => $file];
             $result["inventories"][$server] = $inventory;
             foreach (["routes", "diagnostics", "checks"] as $key) $result[$key] = \array_merge($result[$key], $inventory[$key]);
         }
         if (!$result["routingSources"]) throw new RouteError("Missing readable config/nginx.conf or config/apache.conf. Supply an application routing fragment included by your environment; migrate former maps/server or http.conf/routes.conf layouts manually.");
-        if (\count($result["routingSources"]) === 2 && !$result["diagnostics"]) {
+        if (!$readOnly && \count($result["routingSources"]) === 2 && !$result["diagnostics"]) {
             try {
                 self::compare($result["inventories"]);
             } catch (RouteError $error) {

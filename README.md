@@ -366,3 +366,14 @@ The current CLI expects the server-included fragment. It diagnoses former `http.
 5. Remove application-owned FastCGI/FPM files only after the environment provides their required behavior. Validate the complete deployment and exercise methods, route/query collisions and private URLs.
 
 The CLI's `check` parses the supported route syntax, checks optional method/Allow consistency and lints existing PHP targets. It neither invokes Nginx nor generates a server configuration. Validate the complete Nginx configuration and test the full request path through your environment. Former per-route transport includes are also unsupported and require this manual migration.
+
+## Read-only native Nginx inventory
+
+`list` and `check` inspect native rewrites, conditional routes and local redirects
+alongside language, header and static-resource directives. Records retain the native
+pattern, target and enclosing conditions. Unsupported constructs produce located
+diagnostics and an explicitly incomplete inventory. This is not a full Nginx validator.
+
+`add` continues to require the supported editable profile. Discovery does not grant
+permission to rewrite complex configuration. Native inventory records are conservatively
+marked `editable: false`; the editor independently validates each addition.

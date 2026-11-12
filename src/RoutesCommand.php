@@ -169,7 +169,7 @@ final class RoutesCommand
                     }
                 }
             }
-            $inventory = RoutingSources::read($root);
+            $inventory = RoutingSources::read($root, readOnly: !$adding);
             $result["routingSources"] = $inventory["routingSources"];
             $sourceFile = $inventory["routingSources"][0]["file"];
             $result["routes"] = $inventory["routes"];
@@ -186,7 +186,7 @@ final class RoutesCommand
                     self::outputResult($result, $json);
                     return 1;
                 }
-                $result["message"] = "Inventory derived from native routes and available method files. Run check to verify endpoints and cross-server consistency. Validate the full server configuration through your environment.";
+                $result["message"] = "Inventory derived from native routes and available method files. Run check to verify discovered endpoints. Cross-server equivalence is required separately before editing. Validate the full server configuration through your environment.";
             } else {
                 if ($inventory["checks"]) {
                     $result["diagnostics"] = $inventory["checks"];
@@ -196,7 +196,7 @@ final class RoutesCommand
                 }
                 self::validateTargets($root, \array_filter($inventory["routes"], static fn($route) => $route["kind"] === "endpoint"));
                 if ($command === "check") {
-                    $result["message"] = "Supported route syntax, routing consistency and PHP endpoint syntax passed. Full server configuration, PHP integration and HTTP behavior must be checked in your environment.";
+                    $result["message"] = "Discovered route targets and PHP endpoint syntax passed. Full server configuration, PHP integration and HTTP behavior must be checked in your environment.";
                 } else {
                     if (isset($options["--expected-routes-sha256"]) && !\hash_equals($options["--expected-routes-sha256"], \hash_file("sha256", $sourceFile))) {
                         throw new RouteError("Preview is stale: routes changed; preview again");
