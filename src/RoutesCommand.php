@@ -56,8 +56,10 @@ final class RoutesCommand
         }
     }
 
-    private static function outputResult(array $result, bool $json, bool $previewShown = false): void
+    private static function outputResult(array $result, bool $json, bool $previewShown = false, ?string $root = null): void
     {
+        // Keep redirects internally for collision checks, but expose only PHP dispatch.
+        $result["routes"] = \array_values(\array_filter($result["routes"], static fn($route) => $route["kind"] === "endpoint"));
         if ($json) {
             echo \json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), "\n";
             return;
@@ -70,11 +72,14 @@ final class RoutesCommand
         if ($result["routes"]) {
             $rows = [];
             foreach ($result["routes"] as $route) {
+                $source = $route["file"];
+                $prefix = $root === null ? null : \rtrim($root, "/") . "/";
+                if ($prefix !== null && \str_starts_with($source, $prefix)) $source = \substr($source, \strlen($prefix));
                 $rows[] = [
                     $route["methods"] ? \implode(", ", $route["methods"]) : "*",
                     $route["path"],
-                    $route["endpoint"] ?? ($route["redirect"]["status"] . " " . $route["redirect"]["target"]),
-                    $route["file"] . ":" . $route["line"],
+                    $route["endpoint"],
+                    $source . ":" . $route["line"],
                 ];
             }
             ConsoleOutput::table(["METHOD", "PATH", "TARGET", "SOURCE"], $rows);
@@ -176,14 +181,14 @@ final class RoutesCommand
             $result["diagnostics"] = $inventory["diagnostics"];
             if ($inventory["diagnostics"]) {
                 $result["message"] = "Incomplete inventory: unsupported configuration. No edits are permitted.";
-                self::outputResult($result, $json);
+                self::outputResult($result, $json, root: \is_string($root ?? null) ? $root : null);
                 return 1;
             }
             if ($command === "list") {
                 if (\count($inventory["routingSources"]) === 2 && $inventory["checks"]) {
                     $result["diagnostics"] = $inventory["checks"];
                     $result["message"] = "Inventories differ; synchronized edits are blocked.";
-                    self::outputResult($result, $json);
+                    self::outputResult($result, $json, root: \is_string($root ?? null) ? $root : null);
                     return 1;
                 }
                 $result["message"] = "Inventory derived from native routes and available method files. Run check to verify discovered endpoints. Cross-server equivalence is required separately before editing. Validate the full server configuration through your environment.";
@@ -191,7 +196,7 @@ final class RoutesCommand
                 if ($inventory["checks"]) {
                     $result["diagnostics"] = $inventory["checks"];
                     $result["message"] = "Routing contract failed; no edits are permitted.";
-                    self::outputResult($result, $json);
+                    self::outputResult($result, $json, root: \is_string($root ?? null) ? $root : null);
                     return 1;
                 }
                 self::validateTargets($root, \array_filter($inventory["routes"], static fn($route) => $route["kind"] === "endpoint"));
@@ -254,7 +259,7 @@ final class RoutesCommand
                 }
             }
         }
-        self::outputResult($result, $json, $previewShown);
+        self::outputResult($result, $json, $previewShown, \is_string($root ?? null) ? $root : null);
         return $result["ok"] ? 0 : 1;
     }
 }

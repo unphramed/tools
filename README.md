@@ -112,8 +112,7 @@ JSON v2 also reports `routingSources` and the selected `endpoint` for additions.
 Route records may include `schema`; parameters may include `optional`, `unused` and `expression`.
 JSON v2 returns `routes`, `diagnostics`, `changes`, `preconditions`, `planSha256`,
 `ok`, `operation` and `message`. Endpoint records group methods selecting one file;
-redirect records have `kind: redirect`, `endpoint: null`, empty `methods` (unrestricted),
-and a status/target. `parameters` contains name, type, capture and `source`. Rewrite captures use `source: "query"`
+redirects are retained internally for safe editing but omitted from `routes`. `parameters` contains name, type, capture and `source`. Rewrite captures use `source: "query"`
 with `queryKey`; optional location captures use `source: "requestPath"`. This replaces the former
 `serverKey` metadata: path values reach `$_GET` in the rewrite profile or are extracted by the endpoint
 from `REQUEST_URI` in the optional location profile. No custom FastCGI parameters are supplied. Refresh CLI and IDE together for this alpha profile.
@@ -369,7 +368,7 @@ The CLI's `check` parses the supported route syntax, checks optional method/Allo
 
 ## Read-only native Nginx inventory
 
-`list` and `check` inspect native rewrites, conditional routes and local redirects
+`list` and `check` inventory PHP dispatch through native rewrites and conditional routes
 alongside language, header and static-resource directives. Records retain the native
 pattern, target and enclosing conditions. Unsupported constructs produce located
 diagnostics and an explicitly incomplete inventory. This is not a full Nginx validator.
@@ -377,3 +376,7 @@ diagnostics and an explicitly incomplete inventory. This is not a full Nginx val
 `add` continues to require the supported editable profile. Discovery does not grant
 permission to rewrite complex configuration. Native inventory records are conservatively
 marked `editable: false`; the editor independently validates each addition.
+
+The text table shows `SOURCE` relative to the selected project, including with
+`--project`. JSON retains absolute source paths for IDE navigation. Redirects and
+static-resource routes are outside the displayed PHP-controller inventory.
