@@ -11,6 +11,7 @@ final class ConsoleOutput
         if (!$color || !\stream_isatty(STDOUT) || \getenv("NO_COLOR") !== false || \getenv("TERM") === "dumb") {
             return $text;
         }
+
         return "\033[" . $code . "m" . $text . "\033[0m";
     }
 
@@ -18,14 +19,20 @@ final class ConsoleOutput
     public static function table(array $headers, array $rows, bool $color = true): void
     {
         $widths = \array_map("strlen", $headers);
+
         foreach ($rows as $row) {
-            foreach ($row as $column => $cell) $widths[$column] = \max($widths[$column], \strlen($cell));
+            foreach ($row as $column => $cell) {
+                $widths[$column] = \max($widths[$column], \strlen($cell));
+            }
         }
+
         foreach ([$headers, ...$rows] as $index => $row) {
             $cells = [];
+
             foreach ($row as $column => $cell) {
                 $cells[] = $column === \count($row) - 1 ? $cell : \str_pad($cell, $widths[$column]);
             }
+
             $line = \implode("  ", $cells);
             echo $index === 0 ? self::style($line, "1;34", $color) : $line, "\n";
         }
@@ -42,13 +49,19 @@ final class ConsoleOutput
     {
         foreach ($changes as $change) {
             echo "\n", self::style($change["action"] . " " . $change["file"], "1"), "\n";
-            foreach (\explode("\n", \rtrim($change["text"], "\n")) as $line) echo self::style("+" . $line, "32"), "\n";
+
+            foreach (\explode("\n", \rtrim($change["text"], "\n")) as $line) {
+                echo self::style("+" . $line, "32"), "\n";
+            }
         }
     }
 
     public static function factories(array $graph): void
     {
-        if (!$graph) return;
+        if (!$graph) {
+            return;
+        }
+
         self::table(["VISIBILITY", "METHOD", "TYPE", "LIFETIME", "SOURCE"], \array_map(static fn($node) => [
             $node["visibility"], $node["method"] . "()", $node["type"], $node["lifetime"], $node["file"] . ":" . $node["line"],
         ], $graph));

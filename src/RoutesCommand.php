@@ -16,8 +16,10 @@ final class RoutesCommand
             if ((\error_reporting() & $severity) === 0) {
                 return false;
             }
+
             throw new ErrorException($message, 0, $severity, $file, $line);
         });
+
         try {
             return self::execute($argv);
         } finally {
@@ -29,15 +31,19 @@ final class RoutesCommand
     private static function projectPath(string $root, string $relative): string
     {
         $path = $root;
+
         foreach (\explode("/", $relative) as $part) {
             if ($part === "" || $part === "." || $part === "..") {
                 throw new RouteError("Invalid project-relative path");
             }
+
             $path .= "/" . $part;
+
             if (\is_link($path)) {
                 throw new RouteError("Symlinks are not supported for editable files or endpoint paths");
             }
         }
+
         return $path;
     }
 
@@ -46,9 +52,11 @@ final class RoutesCommand
         foreach ($routes as $route) {
             try {
                 $file = self::projectPath($root, $route["endpoint"]);
+
                 if (!\is_file($file)) {
                     throw new RouteError("Missing endpoint: " . $route["endpoint"]);
                 }
+
                 Process::run([PHP_BINARY, "-n", "-d", "short_open_tag=0", "-l", $file]);
             } catch (RouteError $error) {
                 throw new RouteError($error->getMessage(), $route["line"]);
@@ -60,21 +68,33 @@ final class RoutesCommand
     {
         // Keep redirects internally for collision checks, but expose only PHP dispatch.
         $result["routes"] = \array_values(\array_filter($result["routes"], static fn($route) => $route["kind"] === "endpoint"));
+
         if ($json) {
             echo \json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR), "\n";
             return;
         }
+
         ConsoleOutput::diagnostics($result["diagnostics"]);
+
         if ($previewShown) {
-            if ($result["ok"]) echo $result["message"], "\n";
+            if ($result["ok"]) {
+                echo $result["message"], "\n";
+            }
+
             return;
         }
+
         if ($result["routes"]) {
             $rows = [];
+
             foreach ($result["routes"] as $route) {
                 $source = $route["file"];
                 $prefix = $root === null ? null : \rtrim($root, "/") . "/";
-                if ($prefix !== null && \str_starts_with($source, $prefix)) $source = \substr($source, \strlen($prefix));
+
+                if ($prefix !== null && \str_starts_with($source, $prefix)) {
+                    $source = \substr($source, \strlen($prefix));
+                }
+
                 $rows[] = [
                     $route["methods"] ? \implode(", ", $route["methods"]) : "*",
                     $route["path"],
@@ -82,9 +102,12 @@ final class RoutesCommand
                     $source . ":" . $route["line"],
                 ];
             }
+
             ConsoleOutput::table(["METHOD", "PATH", "TARGET", "SOURCE"], $rows);
         }
+
         ConsoleOutput::changes($result["changes"]);
+
         if ($result["ok"]) {
             echo $result["message"], "\n";
         }
@@ -97,31 +120,43 @@ final class RoutesCommand
         $result = ["version" => 2, "operation" => $argv[1] ?? "", "ok" => false, "routes" => [], "routingSources" => [], "diagnostics" => [], "changes" => [], "preconditions" => [], "planSha256" => null, "endpoint" => null, "message" => ""];
         $temporary = [];
         $previewShown = false;
+
         try {
             if (!isset($argv[1]) || $argv[1] === "--help") {
                 ConsoleOutput::help($json);
                 return 0;
             }
+
             $command = $argv[1];
+
             if (!\in_array($command, ["list", "check", "add"], true)) {
                 throw new RouteError("Unknown operation");
             }
+
             $options = [];
             $pattern = null;
+
             for ($i = 2; $i < \count($argv); $i++) {
                 $key = $argv[$i];
+
                 if (!\str_starts_with($key, "--")) {
-                    if ($command !== "add" || $pattern !== null) throw new RouteError("Supply exactly one positional route pattern to add");
+                    if ($command !== "add" || $pattern !== null) {
+                        throw new RouteError("Supply exactly one positional route pattern to add");
+                    }
+
                     $pattern = $key;
                     continue;
                 }
+
                 if (isset($options[$key]) && $key !== "--method") {
                     throw new RouteError("Duplicate option: " . $key);
                 }
+
                 if (\in_array($key, ["--dry-run", "--json", "--create-endpoint"], true)) {
                     $options[$key] = true;
                 } elseif (\in_array($key, ["--project", "--endpoint", "--method", "--expected-plan-sha256", "--expected-routes-sha256"], true) && isset($argv[$i + 1]) && !\str_starts_with($argv[$i + 1], "--")) {
                     $value = $argv[++$i];
+
                     if ($key === "--method") {
                         $options[$key][] = $value;
                     } else {
@@ -131,41 +166,55 @@ final class RoutesCommand
                     throw new RouteError("Unknown option or missing value: " . $key);
                 }
             }
+
             $adding = $command === "add";
+
             foreach (\array_keys($options) as $key) {
                 if (!$adding && !\in_array($key, ["--project", "--json"], true)) {
                     throw new RouteError("Editing options belong to add");
                 }
             }
+
             foreach (["--expected-plan-sha256", "--expected-routes-sha256"] as $guard) {
                 if (isset($options[$guard]) && (isset($options["--dry-run"]) || \preg_match("/\\A[a-f0-9]{64}\\z/D", $options[$guard]) !== 1)) {
                     throw new RouteError($guard . " requires application (no --dry-run) and a lowercase SHA-256");
                 }
             }
+
             if ($command === "add" && isset($options["--expected-routes-sha256"])) {
                 throw new RouteError("Use --expected-plan-sha256: additions must guard all configuration and endpoint inputs");
             }
+
             if ($adding && $json && !isset($options["--dry-run"]) && !isset($options["--expected-plan-sha256"])) {
                 throw new RouteError("--json requires --dry-run for a preview, or --expected-plan-sha256 to apply a reviewed plan.");
             }
+
             $root = \realpath($options["--project"] ?? \getcwd());
+
             if ($root === false || !\is_dir($root)) {
                 throw new RouteError("Project directory does not exist");
             }
+
             if ($adding) {
-                if ($pattern === null) throw new RouteError("Usage: unphramed-routes add ROUTE_PATTERN [options]");
+                if ($pattern === null) {
+                    throw new RouteError("Usage: unphramed-routes add ROUTE_PATTERN [options]");
+                }
+
                 $options += RoutePattern::options($pattern, !$json && \stream_isatty(STDIN) && \stream_isatty(STDOUT));
             }
+
             $inventory = RoutingSources::read($root, readOnly: !$adding);
             $result["routingSources"] = $inventory["routingSources"];
             $sourceFile = $inventory["routingSources"][0]["file"];
             $result["routes"] = $inventory["routes"];
             $result["diagnostics"] = $inventory["diagnostics"];
+
             if ($inventory["diagnostics"]) {
                 $result["message"] = "Incomplete inventory: unsupported configuration. No edits are permitted.";
                 self::outputResult($result, $json, root: \is_string($root ?? null) ? $root : null);
                 return 1;
             }
+
             if ($command === "list") {
                 if (\count($inventory["routingSources"]) === 2 && $inventory["checks"]) {
                     $result["diagnostics"] = $inventory["checks"];
@@ -173,6 +222,7 @@ final class RoutesCommand
                     self::outputResult($result, $json, root: \is_string($root ?? null) ? $root : null);
                     return 1;
                 }
+
                 $result["message"] = "Inventory derived from native routes and available method files. Run check to verify discovered endpoints. Cross-server equivalence is required separately before editing. Validate the full server configuration through your environment.";
             } else {
                 if ($inventory["checks"]) {
@@ -181,20 +231,26 @@ final class RoutesCommand
                     self::outputResult($result, $json, root: \is_string($root ?? null) ? $root : null);
                     return 1;
                 }
+
                 self::validateTargets($root, \array_filter($inventory["routes"], static fn($route) => $route["kind"] === "endpoint"));
+
                 if ($command === "check") {
                     $result["message"] = "Discovered route targets and PHP endpoint syntax passed. Full server configuration, PHP integration and HTTP behavior must be checked in your environment.";
                 } else {
                     if (isset($options["--expected-routes-sha256"]) && !\hash_equals($options["--expected-routes-sha256"], \hash_file("sha256", $sourceFile))) {
                         throw new RouteError("Preview is stale: routes changed; preview again");
                     }
+
                     $plan = RouteEditor::preview($root, $options, $inventory);
+
                     if ($plan["inventory"]["diagnostics"] || $plan["inventory"]["checks"]) {
                         throw new RouteError("Proposed configuration cannot be fully interpreted");
                     }
+
                     if (isset($options["--expected-plan-sha256"]) && !\hash_equals($options["--expected-plan-sha256"], $plan["planSha256"])) {
                         throw new RouteError("Preview is stale: configuration or endpoint changed; preview again");
                     }
+
                     foreach ($plan["changes"] as $change) {
                         if ($change["action"] === "create") {
                             $code = \tempnam(\dirname($sourceFile), ".endpoint-check-");
@@ -203,21 +259,28 @@ final class RoutesCommand
                             Process::run([PHP_BINARY, "-n", "-d", "short_open_tag=0", "-l", $code]);
                         }
                     }
+
                     foreach ($temporary as $file) {
-                        if (\is_file($file)) \unlink($file);
+                        if (\is_file($file)) {
+                            \unlink($file);
+                        }
                     }
+
                     $result["routes"] = $plan["inventory"]["routes"];
                     $result["changes"] = $plan["changes"];
                     $result["preconditions"] = $plan["preconditions"];
                     $result["planSha256"] = $plan["planSha256"];
                     $result["endpoint"] = $plan["endpoint"];
                     $result["message"] = "Dry run only. Run add without --dry-run to review and confirm these changes. Created endpoints return 501; existing PHP is preserved.";
+
                     if (!isset($options["--dry-run"])) {
                         $confirmed = true;
+
                         if (!isset($options["--expected-plan-sha256"])) {
                             $confirmed = CliConfirmation::confirm($plan["changes"]);
                             $previewShown = true;
                         }
+
                         if ($confirmed) {
                             RouteEditor::apply($root, $plan);
                             $result["message"] = "Associations applied. No service reloaded. Activate the updated routes through your environment workflow.";
@@ -227,6 +290,7 @@ final class RoutesCommand
                     }
                 }
             }
+
             $result["ok"] = true;
         } catch (Throwable $error) {
             $result["changes"] = [];
@@ -241,6 +305,7 @@ final class RoutesCommand
                 }
             }
         }
+
         self::outputResult($result, $json, $previewShown, \is_string($root ?? null) ? $root : null);
         return $result["ok"] ? 0 : 1;
     }
