@@ -115,7 +115,11 @@ final class RouteEditor
             $bindings[$method] = $endpoint;
         }
         if ($selected !== null) {
-            if (\array_intersect(["--constraint", "--choices", "--unused"], \array_keys($options)) && ($description["schema"]["options"] ?? []) !== ($selected["schema"]["options"] ?? [])) throw new RouteError("Parameter options differ from the existing route; edit its contract explicitly before adding a method");
+            $normalize = static function (string $pattern): string {
+                if (!\str_starts_with($pattern, "^")) return "^" . \preg_quote($pattern, "~") . '$';
+                return \preg_replace('/\(\?<[^>]+>/', "(", $pattern);
+            };
+            if ($normalize($description["pattern"]) !== $normalize($selected["pattern"])) throw new RouteError("Route expression differs from the existing route; edit its contract explicitly before adding a method");
             $description = $selected;
         }
         if ($selected === null && !isset($options["--endpoint"]) && (isset($bindings["GET"]) || isset($bindings["HEAD"]))) {

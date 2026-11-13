@@ -107,16 +107,22 @@ final class RoutesCommand
                 throw new RouteError("Unknown operation");
             }
             $options = [];
+            $pattern = null;
             for ($i = 2; $i < \count($argv); $i++) {
                 $key = $argv[$i];
-                if (isset($options[$key]) && !\in_array($key, ["--method", "--constraint", "--choices", "--unused"], true)) {
+                if (!\str_starts_with($key, "--")) {
+                    if ($command !== "add" || $pattern !== null) throw new RouteError("Supply exactly one positional route pattern to add");
+                    $pattern = $key;
+                    continue;
+                }
+                if (isset($options[$key]) && $key !== "--method") {
                     throw new RouteError("Duplicate option: " . $key);
                 }
                 if (\in_array($key, ["--dry-run", "--json", "--create-endpoint"], true)) {
                     $options[$key] = true;
-                } elseif (\in_array($key, ["--project", "--path", "--endpoint", "--method", "--constraint", "--choices", "--unused", "--expected-plan-sha256", "--expected-routes-sha256"], true) && isset($argv[$i + 1]) && !\str_starts_with($argv[$i + 1], "--")) {
+                } elseif (\in_array($key, ["--project", "--endpoint", "--method", "--expected-plan-sha256", "--expected-routes-sha256"], true) && isset($argv[$i + 1]) && !\str_starts_with($argv[$i + 1], "--")) {
                     $value = $argv[++$i];
-                    if (\in_array($key, ["--method", "--constraint", "--choices", "--unused"], true)) {
+                    if ($key === "--method") {
                         $options[$key][] = $value;
                     } else {
                         $options[$key] = $value;
@@ -146,33 +152,9 @@ final class RoutesCommand
             if ($root === false || !\is_dir($root)) {
                 throw new RouteError("Project directory does not exist");
             }
-            if ($adding && !isset($options["--path"])) {
-                if ($json || !\stream_isatty(STDIN) || !\stream_isatty(STDOUT)) throw new RouteError("Supply --path with the complete route schema; filenames cannot determine constraints or optionality");
-                $suggestion = "";
-                if (isset($options["--endpoint"])) {
-                    RoutePath::endpoint($options["--endpoint"]);
-                    if (\preg_match('~\Aweb/([A-Z_-]+)/(.*)\.php\z~D', $options["--endpoint"], $match)) {
-                        $options["--method"] ??= [$match[1]];
-                        $suggestion = $match[2] === "index" ? "/" : "/" . \preg_replace('/\[([a-z][A-Za-z0-9_]*)\]/', '{$1}', $match[2]);
-                    }
-                }
-                echo "Route schema", $suggestion ? " [" . $suggestion . "]" : "", ": ";
-                $answer = \fgets(STDIN);
-                if ($answer === false) throw new RouteError("Cancelled: no route schema supplied");
-                $options["--path"] = \trim($answer) ?: $suggestion;
-                echo "Method [", $options["--method"][0] ?? "GET", "]: ";
-                $answer = \fgets(STDIN);
-                if ($answer === false) throw new RouteError("Cancelled: no method supplied");
-                if (\trim($answer) !== "") $options["--method"] = [\trim($answer)];
-                if (\str_contains($options["--path"], "{")) {
-                    foreach (["--constraint" => "Constraints (NAME=REGEX)", "--choices" => "Choices (NAME=a,b)", "--unused" => "Unused by every method (names)"] as $key => $label) {
-                        if (isset($options[$key])) continue;
-                        echo $label, " [none; space-separated]: ";
-                        $answer = \fgets(STDIN);
-                        if ($answer === false) throw new RouteError("Cancelled: incomplete route schema");
-                        if (\trim($answer) !== "") $options[$key] = \preg_split('/\s+/', \trim($answer));
-                    }
-                }
+            if ($adding) {
+                if ($pattern === null) throw new RouteError("Usage: unphramed-routes add ROUTE_PATTERN [options]");
+                $options += RoutePattern::options($pattern, !$json && \stream_isatty(STDIN) && \stream_isatty(STDOUT));
             }
             $inventory = RoutingSources::read($root, readOnly: !$adding);
             $result["routingSources"] = $inventory["routingSources"];

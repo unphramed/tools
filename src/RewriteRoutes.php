@@ -18,6 +18,15 @@ final class RewriteRoutes
             return $description + ["node" => $node, "kind" => "redirect", "profile" => "rewrite", "redirect" => ["status" => $flag === "permanent" ? 301 : 302, "target" => $target]];
         }
         if ($flag !== "last") throw new RouteError("Application rewrites must use last to reach the common PHP handler");
+        $description = isset($node["schema"]) ? RoutePath::describe($node["schema"]["path"], $node["schema"]["options"] ?? []) : null;
+        $normalizations = [];
+        if ($node["schema"]["options"]["--named"] ?? false) {
+            foreach ($description["parameters"] as $index => $parameter) {
+                $normalizations['$' . $parameter["capture"]] = '$' . ($index + 1);
+            }
+            $target = \strtr($target, $normalizations);
+            $args[2] = $target;
+        }
         $parts = \explode("?", $target, 2);
         $script = $parts[0];
         $arguments = [];
@@ -33,9 +42,10 @@ final class RewriteRoutes
                 $arguments[(int) $match[2]] = $match[1];
             }
         }
-        $description = isset($node["schema"]) ? RoutePath::describe($node["schema"]["path"], $node["schema"]["options"] ?? []) : self::description($pattern, $arguments);
+        $description ??= self::description($pattern, $arguments);
         if (isset($node["schema"])) {
             $expected = (new NginxSyntax(self::text($description, "web" . $script, $queryMode === "replace")))->parse()[0]["args"];
+            $expected[2] = \strtr($expected[2], $normalizations);
             if ($expected !== $args) throw new RouteError("Route schema comment disagrees with its native rewrite");
             foreach ($description["parameters"] as $index => &$parameter) {
                 $parameter["source"] = "query";
@@ -142,16 +152,23 @@ final class RewriteRoutes
     public static function text(array $description, string $endpointPattern, bool $replaceQuery = false): string
     {
         if (\count($description["parameters"]) > 9) throw new RouteError("This rewrite profile supports at most nine captures");
+        $namedCaptures = $description["schema"]["options"]["--named"] ?? false;
         $pattern = $description["pattern"];
         if (!\str_starts_with($pattern, "^")) $pattern = "^" . \preg_quote($pattern, "~") . '$';
         foreach ($description["parameters"] as $parameter) {
-            $pattern = \str_replace("(?<" . $parameter["capture"] . ">", "(", $pattern);
+            if (!$namedCaptures) {
+                $pattern = \str_replace("(?<" . $parameter["capture"] . ">", "(", $pattern);
+            }
             if (!self::querySafe($parameter)) throw new RouteError("Arbitrary string captures need the optional location/request-path profile");
         }
         $target = \substr($endpointPattern, 3);
         if ($description["parameters"]) {
             $pairs = [];
-            foreach ($description["parameters"] as $index => $parameter) if (!($parameter["unused"] ?? false)) $pairs[] = $parameter["name"] . '=$' . ($index + 1);
+            foreach ($description["parameters"] as $index => $parameter) {
+                if ($parameter["unused"] ?? false) continue;
+                $capture = $namedCaptures ? $parameter["capture"] : $index + 1;
+                $pairs[] = $parameter["name"] . '=$' . $capture;
+            }
             if (!$pairs) return 'rewrite "' . $pattern . '" ' . $target . " last;";
             $target .= ($replaceQuery ? "?" : '?$args&') . \implode("&", $pairs);
             $target .= "?";

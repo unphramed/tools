@@ -69,7 +69,7 @@ final class RoutePath
             if (!isset($parameters[$name])) throw new RouteError("Unknown route parameter: " . $name);
         }
         if (\in_array($filename[0] ?? "", ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "assets"], true)) throw new RouteError("This path is reserved for implementation files or assets");
-        return ["path" => $canonical ? "/" . \implode("/", $canonical) : "/", "pattern" => $parameters ? "^" . ($pattern ?: "/") . '$' : $path, "parameters" => \array_values($parameters), "modifier" => $parameters ? "~" : "=", "filename" => $filename ? \implode("/", $filename) . ".php" : "index.php", "schema" => ["path" => $path, "options" => \array_intersect_key($options, \array_flip(["--constraint", "--choices", "--unused"]))]];
+        return ["path" => $canonical ? "/" . \implode("/", $canonical) : "/", "pattern" => $parameters ? "^" . ($pattern ?: "/") . '$' : $path, "parameters" => \array_values($parameters), "modifier" => $parameters ? "~" : "=", "filename" => $filename ? \implode("/", $filename) . ".php" : "index.php", "schema" => ["path" => $path, "options" => \array_intersect_key($options, \array_flip(["--constraint", "--choices", "--unused", "--named"]))]];
     }
 
     private static function literal(string $literal): void

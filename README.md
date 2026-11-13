@@ -48,10 +48,10 @@ It never generates a server configuration, starts a service or executes the appl
 vendor/bin/unphramed-routes list
 vendor/bin/unphramed-routes check
 # Existing target: no PHP file is modified.
-vendor/bin/unphramed-routes add --path /books --method GET --endpoint web/GET/books.php
+vendor/bin/unphramed-routes add /books --method GET --endpoint web/GET/books.php
 # Inferred target: preview, then review and confirm to create a missing 501 skeleton.
-vendor/bin/unphramed-routes add --path '/books/{id:int}/{slug:slug}' --method PURGE --dry-run
-vendor/bin/unphramed-routes add --path '/books/{id:int}/{slug:slug}' --method PURGE
+vendor/bin/unphramed-routes add '/books/(?<id>[1-9][0-9]{0,8})/(?<slug>[a-z0-9]+(?:-[a-z0-9]+)*)' --method PURGE --dry-run
+vendor/bin/unphramed-routes add '/books/(?<id>[1-9][0-9]{0,8})/(?<slug>[a-z0-9]+(?:-[a-z0-9]+)*)' --method PURGE
 ```
 
 `add` displays the diff and asks `Apply these changes? [y/N]`. Only `y` or `yes`
@@ -60,44 +60,38 @@ GET is the default method. An absent endpoint becomes a 501 skeleton; an existin
 file is reused without changes. `--endpoint` overrides the inferred path.
 
 ```sh
-vendor/bin/unphramed-routes add --path /users
-vendor/bin/unphramed-routes add --path /users --dry-run
-vendor/bin/unphramed-routes add --path /users --method POST
-vendor/bin/unphramed-routes add --path /users --endpoint web/custom/users.php
+vendor/bin/unphramed-routes add /users
+vendor/bin/unphramed-routes add /users --dry-run
+vendor/bin/unphramed-routes add /users --method POST
+vendor/bin/unphramed-routes add /users --endpoint web/custom/users.php
 ```
 
-Endpoint filenames follow the recognized route schema: `/` selects `web/GET/index.php`,
-`/users` selects `web/GET/users.php`, and `/users/{id:int}` selects `web/GET/users/[id].php`.
-Preserve literal spelling, punctuation and extensions. Parameters use lowerCamelCase names;
-types do not appear in filenames. `{id}` defaults to `int`. HEAD selects the GET file,
-without changing the method received by PHP. No HEAD file is created. Reserve `index.php`
-for `/`; `/index` needs an explicit alias. Trailing slashes do not add filename segments.
-
-Optional whole segments use `{page?}` or `{page:int?}` and remain in the filename even
-when absent. Compound segments such as `/images/{id}.jpg` select `images/[id].jpg.php`.
-Repeat `--constraint NAME=REGEX` to override a parameter's type pattern, `--choices NAME=a,b`
-for finite choices, and `--unused NAME` for values unused by every method. An unused
-whole-segment finite choice becomes `_`; ordinary unused parameters retain `[name]`.
-Constraints cannot contain capturing groups or server directives. Query bindings accept
-only patterns whose alphabet is demonstrably URL-safe; other expressions are refused.
-The optional Nginx location profile still supports the built-in arbitrary-string type.
-Absent optional query captures are empty strings; controllers choose defaults.
+Supply exactly one positional route pattern to `add`. The route is mandatory even
+with `--endpoint`; there is no route-schema prompt. GET is the default and HEAD
+selects the GET file without changing the method received by PHP.
 
 ```sh
-vendor/bin/unphramed-routes add --path '/archive/{page:int?}'
-vendor/bin/unphramed-routes add --path '/images/{photoId}.jpg'
-vendor/bin/unphramed-routes add --path '/likes/{kind}/{id}' --choices kind=book,film --unused kind
-vendor/bin/unphramed-routes add --path '/lookup/{key:string}' --constraint 'key=[a-z0-9]{3}'
-vendor/bin/unphramed-routes add --endpoint 'web/GET/articles/[id].php'
+vendor/bin/unphramed-routes add '/documents/(?<code>[a-f0-9]{8})'
+vendor/bin/unphramed-routes add '/documents/([a-f0-9]{8})'
+vendor/bin/unphramed-routes add '/archive(?:/(?<page>[1-9][0-9]{0,8}))?'
+vendor/bin/unphramed-routes add '/images/(?<photoId>[1-9][0-9]{0,8})\.jpg'
+vendor/bin/unphramed-routes add '/likes/(?:book|film)/(?<id>[1-9][0-9]{0,8})'
 ```
 
-Bare `add`, or `add --endpoint FILE` without a path, asks for the schema and method
-on a terminal. A filename only suggests fields: confirm constraints and optionality.
-There are no PHP annotations or automatic filesystem route registration. Without a
-terminal, supply the complete schema with `--path`. Existing PHP remains intact.
-Several methods in one addition require an explicit shared endpoint. Existing routes
-are never renamed or silently migrated. Generated rewrites carry an adjacent
-`# route-schema` comment; its schema must agree with the native rule to permit editing.
+Named captures define query keys and `[lowerCamelCase]` filename components.
+Anonymous captures prompt for names only on terminal input/output. Scripts and
+JSON clients must name every capture. Noncapturing whole-segment finite choices
+select `_` and are not transmitted. Optional whole parameter segments remain in
+the filename when absent. Escape literal dots. Patterns may omit both anchors or
+include both `^` and `$`; complete routes are generated. Lookarounds, backreferences,
+nested captures and expressions unsafe in raw query values are rejected.
+
+`/documents/(?<code>[a-f0-9]{8})` selects `web/GET/documents/[code].php`.
+Only `/` defaults to `index.php`. Several methods require an explicit shared
+endpoint. Existing PHP is preserved; absent files become 501 skeletons. Native
+configuration remains authoritative and no filesystem route registration occurs.
+Existing configurations and legacy schema comments remain readable; the old
+`--path`, `--constraint`, `--choices` and `--unused` CLI options are rejected.
 
 For scripts and IDE clients, preview with `--dry-run --json`, then run the same
 addition with `--expected-plan-sha256 HASH` (without `--dry-run`). It applies the

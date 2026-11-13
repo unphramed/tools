@@ -47,6 +47,11 @@ final class ApacheRouteEditor
         $pattern = $dynamic ? \str_replace("web/" . ($methods[0] === "HEAD" ? "GET" : $methods[0]) . "/", 'web/$handler_method/', $endpoint) : $endpoint;
         $nginx = (new NginxSyntax(RewriteRoutes::text($description, $pattern, true)))->parse()[0]["args"];
         $target = \str_replace(['$request_method', '$handler_method'], ["%{REQUEST_METHOD}", "%{ENV:handler_method}"], $nginx[2]);
+        $captures = [];
+        foreach ($description["parameters"] as $index => $parameter) {
+            $captures['$' . $parameter["capture"]] = '$' . ($index + 1);
+        }
+        $target = \strtr($target, $captures);
         if (\str_contains($target, "?")) $target = \substr($target, 0, -1);
         $text = "";
         if (!$dynamic) $text .= "RewriteCond %{REQUEST_METHOD} ^(?:" . \implode("|", $methods) . ")$\n";
